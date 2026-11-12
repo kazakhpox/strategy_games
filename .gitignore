@@ -1,0 +1,12 @@
+bin/
+obj/
+saves/
+*.user
+.vs/
+.idea/
+TestResults/
+# Godot
+client/.godot/
+client/.mono/
+client/export/
+*.translation
