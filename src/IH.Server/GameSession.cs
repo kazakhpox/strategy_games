@@ -115,6 +115,7 @@ public sealed class GameSession
         }
         Slots[slot].Conn = null;
         Slots[slot].DisconnectedAt = _server.Now;
+        if (voluntary) Slots[slot].Token = ""; // no automatic resume; the seat can be reclaimed by name from the lobby
         Game!.P(slot).Connected = false;
         Flush();
     }
