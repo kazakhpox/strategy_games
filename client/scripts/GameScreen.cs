@@ -48,7 +48,11 @@ public partial class GameScreen : Control
 
         // ---- top bar
         var top = Ui.Panel(6);
-        var topRow = Ui.H(18, _turn, _gold, _science, _itr, Ui.Spacer(), _ping,
+        // the research label takes whatever width is left and is cut with an ellipsis, so the bar never outgrows the window
+        _science.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _science.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        _science.CustomMinimumSize = new Vector2(120, 0);
+        var topRow = Ui.H(14, _turn, _gold, _itr, _science, _ping,
             Ui.Btn("Наука F6", () => Toggle(Win.Science)), Ui.Btn("Экономика F2", () => Toggle(Win.Economy)),
             Ui.Btn("Дипломатия F4", () => Toggle(Win.Diplomacy)), Ui.Btn("Демография F9", () => Toggle(Win.Demographics)),
             Ui.Btn("Выйти", () => Net.Send(MsgType.LeaveGame), "Покинуть игру. Место сохранится — вернуться можно из списка игр под тем же именем"));
@@ -114,7 +118,7 @@ public partial class GameScreen : Control
         _toast.HorizontalAlignment = HorizontalAlignment.Center;
         AddChild(overlay);
 
-        Log("Игра началась. ЛКМ — выбрать, ПКМ — идти/атаковать, колесо — масштаб, WASD — камера.", Ui.Dim);
+        Log("Игра началась. ЛКМ — выбрать, ПКМ — идти/атаковать, колесо — масштаб, WASD — камера, Q/E — поворот.", Ui.Dim);
     }
 
     public override void _Ready() => Map.ApplyCamera();
@@ -738,7 +742,7 @@ public partial class Minimap : Control
         DrawTextureRect(_tex, new Rect2(Vector2.Zero, Size), false);
         var map = _screen.Map;
         var total = map.MapPixelSize;
-        var view = GetViewportRect().Size / map.Zoom;
+        var view = map.ViewSize;
         var topLeft = (map.Cam - view / 2) / total * Size;
         var rect = new Rect2(topLeft, view / total * Size).Intersection(new Rect2(Vector2.Zero, Size));
         if (rect.Size.X > 1 && rect.Size.Y > 1) DrawRect(rect, Colors.White, false, 1.5f);
