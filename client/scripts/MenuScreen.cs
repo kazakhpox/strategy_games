@@ -15,7 +15,12 @@ public partial class MenuScreen : Control
         _timer = new() { MinValue = 0, MaxValue = 600, Step = 15, Value = 0, Suffix = " с" };
     private readonly Label _roomTitle = Ui.Lbl("", 18, Ui.Gold), _roomInfo = Ui.Lbl("", 13, Ui.Dim);
     private Button _startBtn = null!, _readyBtn = null!;
-    public bool AutoHost;
+    private readonly OptionButton _hostSave = new();
+    private readonly Label _hostInfo = Ui.Lbl("Друзья подключаются к вашему IP из Radmin VPN. Откройте входящий UDP-порт в брандмауэре.", 12, Ui.Dim);
+    private readonly System.Collections.Generic.List<string> _saves = LocalServer.Saves();
+    private double _connectAt = -1;
+    public bool AutoHost, AutoJoin;
+    public void SelectLatestSave() { if (_saves.Count > 0) _hostSave.Selected = 1; }
 
     private static readonly (string label, int w, int h)[] Sizes =
     {
@@ -47,8 +52,16 @@ public partial class MenuScreen : Control
         _connectBox = Ui.V(8,
             Row("Ваше имя", _name), Row("Адрес сервера", _host), Row("Порт (UDP)", _port),
             Ui.Btn("Подключиться", ConnectPressed, size: 16),
-            Ui.Lbl("Сервер запускает один из игроков: IH.Server. Остальные вводят его IP из Radmin VPN.", 12, Ui.Dim));
+            new HSeparator(),
+            Ui.Lbl("Или станьте хостом — сервер запустится на этом компьютере:", 13, Ui.Dim),
+            Row("Партия", _hostSave),
+            Ui.Btn("Создать сервер и подключиться", HostPressed, size: 16),
+            _hostInfo);
         root.AddChild(_connectBox);
+        _hostInfo.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _hostInfo.CustomMinimumSize = new Vector2(500, 0);
+        _hostSave.AddItem("Новая партия");
+        foreach (string save in _saves) _hostSave.AddItem("Продолжить: " + save.GetFile() + "  (" + Time.GetDatetimeStringFromUnixTime((long)FileAccess.GetModifiedTime(save), true) + ")");
 
         for (int i = 0; i < Sizes.Length; i++) _mapSize.AddItem(Sizes[i].label, i);
         _mapSize.Selected = 1;
@@ -92,6 +105,29 @@ public partial class MenuScreen : Control
     {
         _status.AddThemeColorOverride("font_color", Ui.Bad);
         _status.Text = text;
+    }
+
+    public void HostPressed()
+    {
+        if (!int.TryParse(_port.Text.Trim(), out int port) || port < 1 || port > 65535) { ShowError("Порт — число от 1 до 65535"); return; }
+        if (_name.Text.Trim().Length == 0) { ShowError("Введите имя"); return; }
+        int pick = _hostSave.Selected - 1;
+        string? error = LocalServer.Start(port, pick >= 0 && pick < _saves.Count ? _saves[pick] : null);
+        if (error != null) { ShowError(error); return; }
+        _host.Text = "127.0.0.1";
+        _hostInfo.Text = LocalServer.AddressHint() + $", порт {port} (UDP). Сохранения: {LocalServer.SaveDir}";
+        _hostInfo.AddThemeColorOverride("font_color", Ui.Gold);
+        _status.AddThemeColorOverride("font_color", Ui.Dim);
+        _status.Text = "Запуск сервера…";
+        _connectAt = Time.GetTicksMsec() / 1000.0 + 1.2; // give the process a moment to open its socket
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_connectAt < 0 || Time.GetTicksMsec() / 1000.0 < _connectAt) return;
+        _connectAt = -1;
+        if (!LocalServer.Running) { ShowError("Сервер не запустился (возможно, порт занят)"); return; }
+        ConnectPressed();
     }
 
     public void ConnectPressed()
@@ -147,6 +183,7 @@ public partial class MenuScreen : Control
                     g.Started ? "Занять своё место в идущей игре (нужно то же имя)" : null)));
             }
             if (AutoHost) { AutoHost = false; CreatePressed(); CallDeferred(nameof(AutoStart)); }
+            if (AutoJoin && net.Lobby.Games.Length > 0) { AutoJoin = false; _main.Net.Send(MsgType.JoinGame, new IntMsg { V = net.Lobby.Games[0].Id }); }
         }
         if (net.State == NetState.Room && net.Room != null)
         {

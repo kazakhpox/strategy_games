@@ -61,6 +61,10 @@ public partial class Main : Control
                 CallDeferred(nameof(AutoConnect));
             }
             if (arg == "--autohost") _menu.AutoHost = true;
+            if (arg.StartsWith("--port=")) _menu.SetAddress("127.0.0.1", arg[7..]);
+            if (arg == "--autojoin") _menu.AutoJoin = true;
+            if (arg == "--hostsave") _menu.SelectLatestSave();
+            if (arg == "--hostlocal") _menu.CallDeferred(nameof(MenuScreen.HostPressed));
             if (arg.StartsWith("--tour=")) AddChild(new DemoTour(this, arg[7..]));
         }
     }
@@ -83,6 +87,6 @@ public partial class Main : Control
 
     public override void _Notification(int what)
     {
-        if (what == NotificationWMCloseRequest || what == NotificationPredelete) Net.Dispose();
+        if (what == NotificationWMCloseRequest || what == NotificationPredelete) { Net.Dispose(); LocalServer.Stop(); }
     }
 }
