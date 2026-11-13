@@ -11,7 +11,7 @@ const string Package = "InfiniteHorizons-win-x64.zip";
 const string GameExe = "InfiniteHorizons.exe";
 
 try { Console.OutputEncoding = Encoding.UTF8; } catch { /* no console attached */ }
-Console.Title = "Infinite Horizons";
+try { Console.Title = "Infinite Horizons"; } catch { /* output is redirected */ }
 Console.WriteLine("=== Infinite Horizons — лаунчер ===\n");
 
 string baseUrl = Environment.GetEnvironmentVariable("IH_UPDATE_URL") ?? DefaultBase;

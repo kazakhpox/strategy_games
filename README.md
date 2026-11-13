@@ -71,7 +71,7 @@ dotnet run --project src/IH.Server -c Release -- --port 27015
 ### Сборка для друзей (Windows)
 
 ```bash
-dotnet publish src/IH.Server -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o dist/server
+dotnet publish src/IH.Server -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o dist/server
 ```
 
 Получается один `IH.Server.exe`, которому не нужен установленный .NET. Клиент экспортируется из Godot:

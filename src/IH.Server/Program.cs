@@ -6,6 +6,7 @@ using IH.Shared;
 //   IH.Server [--port 27015] [--saves DIR] [--autosave N] [--afk SEC] [--balance FILE.json] [--load SAVE.json]
 //   IH.Server --sim [--turns 300] [--players 6] [--seed 1] [--no-balance]   balance simulation, no network
 
+try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* no console */ } // Cyrillic on any Windows code page
 var opt = new ServerOptions();
 string? load = null;
 bool sim = false, noBalance = false;

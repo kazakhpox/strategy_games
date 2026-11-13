@@ -64,7 +64,7 @@ jobs:
 
       - name: Publish server and launcher for Windows
         run: |
-          dotnet publish src/IH.Server -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o client/export/server
+          dotnet publish src/IH.Server -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o client/export/server
           dotnet publish src/IH.Launcher -c Release -r win-x64 -o dist/launcher
 
       - name: Package
