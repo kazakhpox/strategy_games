@@ -46,7 +46,8 @@ public sealed class NetClient
 
     public NetClient()
     {
-        _net = new NetManager(_listener) { DisconnectTimeout = 15000, UpdateTime = 10, IPv6Enabled = false };
+        // 20 attempts x 500 ms: a relayed route (VPN, Steam) may need several seconds to come up
+        _net = new NetManager(_listener) { DisconnectTimeout = 15000, UpdateTime = 10, IPv6Enabled = false, MaxConnectAttempts = 20 };
         _listener.PeerConnectedEvent += peer =>
         {
             _peer = peer;

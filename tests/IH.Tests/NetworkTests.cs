@@ -133,6 +133,77 @@ public class NetworkTests
         }
     }
 
+    /// <summary>In-memory stand-in for Steam P2P: unreliable datagrams addressed by 64-bit ids.</summary>
+    private sealed class FakeLink : IPeerLink
+    {
+        public readonly ulong Me;
+        private readonly Dictionary<ulong, Action<ulong, byte[], int>> _net;
+        public int Sent;
+        public FakeLink(ulong me, Dictionary<ulong, Action<ulong, byte[], int>> net) { Me = me; _net = net; }
+        public void Send(ulong peer, byte[] data, int length)
+        {
+            Sent++;
+            if (Sent % 17 == 0) return; // the real thing drops packets too
+            if (_net.TryGetValue(peer, out var deliver)) deliver(Me, data.AsSpan(0, length).ToArray(), length);
+        }
+    }
+
+    [Fact]
+    public void Game_runs_through_a_peer_tunnel_instead_of_direct_udp()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "ih-test-" + Guid.NewGuid().ToString("N"));
+        var server = StartServer(dir);
+        var net = new Dictionary<ulong, Action<ulong, byte[], int>>();
+        const ulong hostId = 76561190000000001, aId = 76561190000000002, bId = 76561190000000003;
+        using var hostTunnel = new TunnelHost(new FakeLink(hostId, net), server.Port);
+        using var tunA = new TunnelClient(new FakeLink(aId, net), hostId);
+        using var tunB = new TunnelClient(new FakeLink(bId, net), hostId);
+        net[hostId] = hostTunnel.OnPeerData; net[aId] = tunA.OnPeerData; net[bId] = tunB.OnPeerData;
+        var a = new NetClient { Name = "A" }; var b = new NetClient { Name = "B" };
+        try
+        {
+            void Run(int ms)
+            {
+                var until = DateTime.UtcNow.AddMilliseconds(ms);
+                while (DateTime.UtcNow < until)
+                {
+                    server.Tick(); hostTunnel.Poll(); tunA.Poll(); tunB.Poll(); a.Poll(); b.Poll();
+                    Thread.Sleep(2);
+                }
+            }
+            // the clients only ever talk to their own loopback port
+            a.Connect("127.0.0.1", tunA.LocalPort); b.Connect("127.0.0.1", tunB.LocalPort);
+            Run(800);
+            Assert.Equal(NetState.Lobby, a.State);
+            Assert.Equal(NetState.Lobby, b.State);
+            Assert.Equal(2, hostTunnel.PeerCount);
+            a.Send(MsgType.CreateGame, new GameSettings { MapW = 40, MapH = 28, AiCount = 1, MaxPlayers = 2, Seed = 11 });
+            Run(300);
+            b.Send(MsgType.JoinGame, new IntMsg { V = a.Room!.Info.Id });
+            Run(300);
+            a.Send(MsgType.StartGame);
+            Run(600);
+            Assert.NotNull(a.World); Assert.NotNull(b.World);
+            Assert.NotEqual(a.World!.MyId, b.World!.MyId);
+            for (int turn = 0; turn < 5; turn++)
+            {
+                a.SendCommand(CmdType.EndTurn); b.SendCommand(CmdType.EndTurn);
+                Run(400);
+            }
+            Assert.Equal(6, a.World.Turn);
+            Assert.Equal(6, b.World.Turn);
+            var g = server.Sessions.Values.Single().Game!;
+            AssertMirrors(g, a.World.MyId, a.World);
+            AssertMirrors(g, b.World.MyId, b.World);
+        }
+        finally
+        {
+            a.Dispose(); b.Dispose();
+            server.Stop();
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
     [Fact]
     public void Disconnected_player_does_not_block_the_game_forever()
     {

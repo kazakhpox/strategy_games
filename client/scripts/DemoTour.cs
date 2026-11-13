@@ -22,6 +22,7 @@ public partial class DemoTour : Node
     private async Task Shot(string name)
     {
         await Wait(0.4);
+        _main.QueueRedraw(); // low-processor mode draws no frame unless something changed
         await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
         GetViewport().GetTexture().GetImage().SavePng($"{_dir}/{name}.png");
         GD.Print($"tour: saved {name}.png");

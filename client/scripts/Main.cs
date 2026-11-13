@@ -62,6 +62,7 @@ public partial class Main : Control
             }
             if (arg == "--autohost") _menu.AutoHost = true;
             if (arg.StartsWith("--port=")) _menu.SetAddress("127.0.0.1", arg[7..]);
+            if (arg == "--steam") _menu.CallDeferred(nameof(MenuScreen.UseSteam));
             if (arg == "--autojoin") _menu.AutoJoin = true;
             if (arg == "--hostsave") _menu.SelectLatestSave();
             if (arg == "--hostlocal") _menu.CallDeferred(nameof(MenuScreen.HostPressed));
@@ -73,20 +74,32 @@ public partial class Main : Control
 
     public string Setting(string key, string fallback) => _cfg.GetValue("ui", key, fallback).AsString();
 
-    public void Connect(string name, string host, int port)
+    public void SaveSetting(string key, string value)
     {
-        _cfg.SetValue("ui", "name", name); _cfg.SetValue("ui", "host", host); _cfg.SetValue("ui", "port", port.ToString());
+        _cfg.SetValue("ui", key, value);
         _cfg.Save(CfgPath);
-        _tokenKey = $"{host}:{port}:{name}";
+    }
+
+    /// <param name="tokenKey">Identity of the server for seat tokens when the address itself is not stable (Steam tunnel).</param>
+    public void Connect(string name, string host, int port, string? tokenKey = null)
+    {
+        _cfg.SetValue("ui", "name", name);
+        if (tokenKey == null) { _cfg.SetValue("ui", "host", host); _cfg.SetValue("ui", "port", port.ToString()); }
+        _cfg.Save(CfgPath);
+        _tokenKey = tokenKey ?? $"{host}:{port}:{name}";
         Net.Name = name;
         Net.Token = _cfg.GetValue("tokens", _tokenKey, "").AsString();
         Net.Connect(host, port);
     }
 
-    public override void _Process(double delta) => Net.Poll();
+    public override void _Process(double delta)
+    {
+        SteamNet.Poll(); // before the game client so tunnelled packets are delivered within the same frame
+        Net.Poll();
+    }
 
     public override void _Notification(int what)
     {
-        if (what == NotificationWMCloseRequest || what == NotificationPredelete) { Net.Dispose(); LocalServer.Stop(); }
+        if (what == NotificationWMCloseRequest || what == NotificationPredelete) { Net.Dispose(); SteamNet.Shutdown(); LocalServer.Stop(); }
     }
 }

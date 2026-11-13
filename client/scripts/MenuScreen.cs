@@ -19,6 +19,10 @@ public partial class MenuScreen : Control
     private readonly Label _hostInfo = Ui.Lbl("Друзья подключаются к вашему IP из Radmin VPN. Откройте входящий UDP-порт в брандмауэре.", 12, Ui.Dim);
     private readonly System.Collections.Generic.List<string> _saves = LocalServer.Saves();
     private double _connectAt = -1;
+    private bool _steamHostPending;
+    private readonly OptionButton _connMode = new(), _steamSave = new();
+    private readonly VBoxContainer _lanBox, _steamBox, _steamGames = Ui.V(4);
+    private readonly Label _steamStatus = Ui.Lbl("", 13, Ui.Dim);
     public bool AutoHost, AutoJoin;
     public void SelectLatestSave() { if (_saves.Count > 0) _hostSave.Selected = 1; }
 
@@ -49,15 +53,39 @@ public partial class MenuScreen : Control
         _port.Text = main.Setting("port", "27015");
         foreach (var e in new[] { _name, _host, _port, _gameName }) e.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
-        _connectBox = Ui.V(8,
-            Row("Ваше имя", _name), Row("Адрес сервера", _host), Row("Порт (UDP)", _port),
+        _connMode.AddItem("Локальная сеть / Radmin VPN", 0);
+        _connMode.AddItem("Steam (через Spacewar, AppID 480)", 1);
+        _lanBox = Ui.V(8,
+            Row("Адрес сервера", _host), Row("Порт (UDP)", _port),
             Ui.Btn("Подключиться", ConnectPressed, size: 16),
             new HSeparator(),
             Ui.Lbl("Или станьте хостом — сервер запустится на этом компьютере:", 13, Ui.Dim),
             Row("Партия", _hostSave),
             Ui.Btn("Создать сервер и подключиться", HostPressed, size: 16),
             _hostInfo);
+        var steamScroll = new ScrollContainer { CustomMinimumSize = new Vector2(0, 110) };
+        steamScroll.AddChild(_steamGames);
+        _steamGames.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _steamStatus.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        _steamStatus.CustomMinimumSize = new Vector2(500, 0);
+        _steamBox = Ui.V(8,
+            _steamStatus,
+            Ui.H(8, Ui.Lbl("Игры в Steam", 16, Ui.Gold), Ui.Spacer(), Ui.Btn("Обновить список", SteamRefreshPressed)),
+            steamScroll,
+            new HSeparator(),
+            Ui.Lbl("Или станьте хостом — игра появится в списке у друзей, VPN и проброс портов не нужны:", 13, Ui.Dim),
+            Row("Партия", _steamSave),
+            Ui.Btn("Создать игру в Steam", HostSteamPressed, size: 16),
+            Ui.Lbl("Steam покажет, что вы играете в Spacewar — это тестовое приложение Valve, под которым работает сеть игры.", 12, Ui.Dim));
+        _connectBox = Ui.V(8, Row("Ваше имя", _name), Row("Подключение", _connMode), new HSeparator(), _lanBox, _steamBox);
         root.AddChild(_connectBox);
+        _steamSave.AddItem("Новая партия");
+        foreach (string save in _saves) _steamSave.AddItem("Продолжить: " + save.GetFile());
+        _connMode.ItemSelected += idx => SetMode((int)idx);
+        SteamNet.Changed += RefreshSteam;
+        TreeExiting += () => SteamNet.Changed -= RefreshSteam;
+        _connMode.Selected = main.Setting("conn", "0") == "1" ? 1 : 0;
+        SetMode(_connMode.Selected, false);
         _hostInfo.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _hostInfo.CustomMinimumSize = new Vector2(500, 0);
         _hostSave.AddItem("Новая партия");
@@ -107,6 +135,71 @@ public partial class MenuScreen : Control
         _status.Text = text;
     }
 
+    // ------------------------------------------------------------- Steam
+    public void UseSteam() { _connMode.Selected = 1; SetMode(1); }
+
+    private void SetMode(int mode, bool save = true)
+    {
+        _lanBox.Visible = mode == 0;
+        _steamBox.Visible = mode == 1;
+        if (save) _main.SaveSetting("conn", mode.ToString());
+        if (mode != 1) return;
+        if (SteamNet.Init())
+        {
+            if (_name.Text.Trim() is "" or "Игрок") _name.Text = SteamNet.PersonaName.Length > 20 ? SteamNet.PersonaName[..20] : SteamNet.PersonaName;
+            SteamNet.RefreshGames();
+        }
+        RefreshSteam();
+    }
+
+    private void SteamRefreshPressed()
+    {
+        if (SteamNet.Init()) SteamNet.RefreshGames();
+        RefreshSteam();
+    }
+
+    private void RefreshSteam()
+    {
+        _steamStatus.Text = SteamNet.Status;
+        _steamStatus.AddThemeColorOverride("font_color", SteamNet.Ready ? Ui.Good : Ui.Bad);
+        Ui.Clear(_steamGames);
+        if (!SteamNet.Ready) { _steamGames.AddChild(Ui.Lbl("Steam недоступен.", 13, Ui.Dim)); return; }
+        if (SteamNet.Searching) { _steamGames.AddChild(Ui.Lbl("Поиск игр…", 13, Ui.Dim)); return; }
+        if (SteamNet.Games.Count == 0)
+            _steamGames.AddChild(Ui.Lbl("Игр не найдено. Попросите хоста создать игру и нажмите «Обновить список».", 13, Ui.Dim));
+        foreach (var g in SteamNet.Games)
+        {
+            ulong id = g.HostId;
+            var info = Ui.Lbl($"{g.HostName} — {g.Info}", 14);
+            info.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            _steamGames.AddChild(Ui.H(8, info, Ui.Btn("Подключиться", () => JoinSteam(id))));
+        }
+    }
+
+    private void JoinSteam(ulong hostId)
+    {
+        string name = _name.Text.Trim();
+        if (name.Length == 0) { ShowError("Введите имя"); return; }
+        _status.Text = "";
+        int port = SteamNet.Join(hostId);
+        _main.Connect(name, "127.0.0.1", port, $"steam:{hostId}:{name}");
+    }
+
+    public void HostSteamPressed()
+    {
+        if (!SteamNet.Init()) { RefreshSteam(); ShowError("Steam недоступен"); return; }
+        if (!int.TryParse(_port.Text.Trim(), out int port) || port < 1 || port > 65535) { port = 27015; _port.Text = "27015"; }
+        if (_name.Text.Trim().Length == 0) { ShowError("Введите имя"); return; }
+        int pick = _steamSave.Selected - 1;
+        string? error = LocalServer.Start(port, pick >= 0 && pick < _saves.Count ? _saves[pick] : null);
+        if (error != null) { ShowError(error); return; }
+        _host.Text = "127.0.0.1";
+        _steamHostPending = true;
+        _status.AddThemeColorOverride("font_color", Ui.Dim);
+        _status.Text = "Запуск сервера…";
+        _connectAt = Time.GetTicksMsec() / 1000.0 + 1.2;
+    }
+
     public void HostPressed()
     {
         if (!int.TryParse(_port.Text.Trim(), out int port) || port < 1 || port > 65535) { ShowError("Порт — число от 1 до 65535"); return; }
@@ -126,7 +219,14 @@ public partial class MenuScreen : Control
     {
         if (_connectAt < 0 || Time.GetTicksMsec() / 1000.0 < _connectAt) return;
         _connectAt = -1;
-        if (!LocalServer.Running) { ShowError("Сервер не запустился (возможно, порт занят)"); return; }
+        if (!LocalServer.Running) { _steamHostPending = false; ShowError("Сервер не запустился (возможно, порт занят)"); return; }
+        if (_steamHostPending)
+        {
+            _steamHostPending = false;
+            SteamNet.StartHosting(int.Parse(_port.Text.Trim()));
+            _main.Connect(_name.Text.Trim(), "127.0.0.1", int.Parse(_port.Text.Trim()), $"steam:host:{_name.Text.Trim()}");
+            return;
+        }
         ConnectPressed();
     }
 
