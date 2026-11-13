@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+env:
+  GODOT_VERSION: 4.4.1
+  GODOT_RELEASES: https://github.com/godotengine/godot/releases/download
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,15 +20,69 @@ jobs:
         run: dotnet test -c Release
       - name: Build Godot client scripts
         run: dotnet build client/IH.Client.csproj -c Release
-      - name: Publish server for Windows
-        run: dotnet publish src/IH.Server -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o dist/server-win-x64
-      - name: Publish server for Linux
-        run: dotnet publish src/IH.Server -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o dist/server-linux-x64
-      - uses: actions/upload-artifact@v4
+
+  # Every push to the default branch becomes the "latest" release that the launcher downloads.
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          name: server-win-x64
-          path: dist/server-win-x64
-      - uses: actions/upload-artifact@v4
+          dotnet-version: 8.0.x
+
+      - name: Cache Godot editor and Windows export template
+        id: godot
+        uses: actions/cache@v4
         with:
-          name: server-linux-x64
-          path: dist/server-linux-x64
+          path: ~/godot
+          key: godot-mono-${{ env.GODOT_VERSION }}-windows-x64
+
+      - name: Download Godot
+        if: steps.godot.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot/templates && cd ~/godot
+          curl -fsSL -o editor.zip "$GODOT_RELEASES/$GODOT_VERSION-stable/Godot_v$GODOT_VERSION-stable_mono_linux_x86_64.zip"
+          unzip -q editor.zip && rm editor.zip
+          curl -fsSL -o templates.tpz "$GODOT_RELEASES/$GODOT_VERSION-stable/Godot_v$GODOT_VERSION-stable_mono_export_templates.tpz"
+          unzip -qj templates.tpz 'templates/windows_release_x86_64.exe' 'templates/windows_release_x86_64_console.exe' 'templates/version.txt' -d templates
+          rm templates.tpz
+
+      - name: Export Windows client
+        run: |
+          mkdir -p "$HOME/.local/share/godot/export_templates/$GODOT_VERSION.stable.mono"
+          cp ~/godot/templates/* "$HOME/.local/share/godot/export_templates/$GODOT_VERSION.stable.mono/"
+          GODOT="$HOME/godot/Godot_v$GODOT_VERSION-stable_mono_linux_x86_64/Godot_v$GODOT_VERSION-stable_mono_linux.x86_64"
+          mkdir -p client/export
+          "$GODOT" --headless --path client --import || true
+          "$GODOT" --headless --path client --export-release "Windows Desktop" export/InfiniteHorizons.exe
+          test -s client/export/InfiniteHorizons.exe
+          test -f client/export/data_IH.Client_windows_x86_64/IH.Client.dll
+
+      - name: Publish server and launcher for Windows
+        run: |
+          dotnet publish src/IH.Server -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=none -o client/export/server
+          dotnet publish src/IH.Launcher -c Release -r win-x64 -o dist/launcher
+
+      - name: Package
+        run: |
+          VERSION="build-${{ github.run_number }}"
+          echo "$VERSION" > dist/version.txt
+          cp dist/version.txt client/export/version.txt
+          (cd client/export && zip -qr ../../dist/InfiniteHorizons-win-x64.zip .)
+          cp dist/launcher/InfiniteHorizonsLauncher.exe dist/
+          ls -la dist
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" --target "${{ github.sha }}" --latest --title "Infinite Horizons $VERSION" \
+            --notes "Скачайте InfiniteHorizonsLauncher.exe, положите в отдельную папку и запустите: он сам скачает игру и будет её обновлять." \
+            dist/InfiniteHorizonsLauncher.exe dist/InfiniteHorizons-win-x64.zip dist/version.txt
+          # keep the five newest builds
+          gh release list --limit 100 --json tagName --jq '.[5:][].tagName' | while read -r tag; do gh release delete "$tag" --cleanup-tag --yes; done
