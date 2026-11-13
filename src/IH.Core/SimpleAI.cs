@@ -37,15 +37,37 @@ public static class SimpleAI
     {
         if (p.Research != null) return;
         var best = Rules.AvailableTechs(p.Known, p.Future)
-            .OrderBy(t => AntiSnowball.TechCost(g, p, t) * (100 + (t.Id.GetHashCode(StringComparison.Ordinal) & 0xFFFF ^ p.Id * 7919) % 40))
+            .OrderBy(t => AntiSnowball.TechCost(g, p, t) * (100 + (StableHash(t.Id) & 0xFFFF ^ p.Id * 7919) % 40))
             .ThenBy(t => t.Id, StringComparer.Ordinal).First();
         Do(g, p, CmdType.SetResearch, s: best.Id);
+    }
+
+    /// <summary>string.GetHashCode is randomised per process; the simulation must replay identically after a restart.</summary>
+    private static int StableHash(string s)
+    {
+        uint h = 2166136261;
+        foreach (char ch in s) h = (h ^ ch) * 16777619;
+        return (int)(h & 0x7FFFFFFF);
     }
 
     private static void Finance(Game g, Player p)
     {
         if (p.GoldRate < 0 && p.Gold < 40 && p.Slider > 0) Do(g, p, CmdType.SetSlider, Math.Max(0, p.Slider - (p.GoldRate < -8 ? 20 : 10)));
-        else if ((p.GoldRate > 3 || p.Gold > 200) && p.Slider < 100) Do(g, p, CmdType.SetSlider, p.Slider + 10);
+        else if (((p.GoldRate >= 1 && p.Gold >= 20) || p.Gold > 200) && p.Slider < 100) Do(g, p, CmdType.SetSlider, p.Slider + 10);
+
+        // an army the treasury cannot feed even with science defunded is trimmed, weakest field units first
+        if (p.GoldRate < 0 && p.Slider <= 20 && p.UnitUpkeep > 0)
+        {
+            var extra = g.UnitsOf(p.Id).Where(u => g.IsMilitary(u) && g.CityAt(u.Tile) == null)
+                .OrderBy(u => g.UnitStr(u)).ThenBy(u => u.Id).FirstOrDefault();
+            if (extra != null) Do(g, p, CmdType.Disband, extra.Id);
+        }
+        // spare gold modernises the oldest units
+        foreach (var u in g.UnitsOf(p.Id).Where(g.IsMilitary).OrderBy(u => u.Def.Str).ThenBy(u => u.Id).Take(3).ToList())
+        {
+            int to = Rules.UpgradeTarget(u.Type, p.Has);
+            if (to >= 0 && p.Gold >= Rules.UpgradePrice(u.Type, to) + 120) Do(g, p, CmdType.Upgrade, u.Id);
+        }
     }
 
     public static bool Accepts(Game g, Player ai, Proposal pr)
@@ -108,7 +130,11 @@ public static class SimpleAI
             var building = Rules.Buildings
                 .Where(b => g.CanBuild(p, c, "b:" + b.Id) && b.Cost <= 40 + c.ProdRate * 40)
                 .OrderBy(b => b.Cost).FirstOrDefault();
+            bool broke = p.GoldRate < 0 && p.Slider <= 40;
+            var money = broke ? Rules.Buildings.Where(b => (b.GoldPct > 0 || b.MaintCutPct > 0) && g.CanBuild(p, c, "b:" + b.Id)).OrderBy(b => b.Cost).FirstOrDefault() : null;
             if (defenders == 0) item = soldier;
+            else if (money != null) item = "b:" + money.Id;
+            else if (broke && !war) item = Rules.Wealth;
             else if (cities.Count + settlers < target && c.Pop >= 2 && BestSite(g, p, c.Tile, 8).tile >= 0) { item = "u:settler"; settlers++; }
             else if (workers < Math.Min(cities.Count, 6)) { item = "u:worker"; workers++; }
             else if (military < cities.Count * (war ? 4 : 2) && (building == null || (c.Id + g.S.Turn) % 2 == 0)) { item = soldier; military++; }

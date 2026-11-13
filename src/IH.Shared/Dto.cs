@@ -11,7 +11,7 @@ public enum MsgType : byte
 public enum CmdType : byte
 {
     None, MoveUnit, FoundCity, Work, Fortify, Disband, SetProduction, RemoveQueue, Buy,
-    SetResearch, SetSlider, DeclareWar, Propose, Respond, CancelBorders, EndTurn, Wake,
+    SetResearch, SetSlider, DeclareWar, Propose, Respond, CancelBorders, EndTurn, Wake, Upgrade,
 }
 
 public enum EventKind : byte

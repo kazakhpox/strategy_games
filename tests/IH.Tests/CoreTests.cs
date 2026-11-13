@@ -212,6 +212,28 @@ public class GameTests
     }
 
     [Fact]
+    public void Units_upgrade_for_gold_inside_own_borders()
+    {
+        var g = New(2, 0);
+        Assert.Null(Cmd(g, 0, CmdType.FoundCity, g.UnitsOf(0).First(u => u.Def.Role == UnitRole.Settler).Id));
+        var warrior = g.UnitsOf(0).First(u => u.Def.Id == "warrior");
+        Assert.NotNull(Cmd(g, 0, CmdType.Upgrade, warrior.Id));                 // nothing better is known yet
+        g.P(0).Known.Add("bronze_working"); g.P(0).Known.Add("iron_working");
+        int to = Rules.UpgradeTarget(warrior.Type, g.P(0).Has);
+        Assert.Equal("swordsman", Rules.Units[to].Id);                           // best same-speed unit, not the horseman
+        g.P(0).Gold = 5;
+        Assert.NotNull(Cmd(g, 0, CmdType.Upgrade, warrior.Id));                 // too poor
+        g.P(0).Gold = 500;
+        int price = Rules.UpgradePrice(warrior.Type, to);
+        Assert.Null(Cmd(g, 0, CmdType.Upgrade, warrior.Id));
+        Assert.Equal("swordsman", warrior.Def.Id);
+        Assert.Equal(500 - price, g.P(0).Gold);
+        Assert.Equal(0, warrior.Moves);
+        Assert.NotNull(Cmd(g, 0, CmdType.Upgrade, warrior.Id));                 // already the best
+        Assert.Equal(-1, Rules.UpgradeTarget(Rules.UnitIndex("settler"), _ => true));
+    }
+
+    [Fact]
     public void Fog_of_war_hides_everything_outside_line_of_sight()
     {
         var g = Simulation.Run(40, 4, 5, false, null, false);

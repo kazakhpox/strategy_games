@@ -118,6 +118,20 @@ public class AntiSnowballTests
         Assert.Empty(g.S.Cities.Values.Where(c => c.Owner == 1 || c.Owner == 2).Where(c => c.DisorderTurns > 0));
     }
 
+    [Theory]
+    [InlineData(2)]
+    [InlineData(7)]
+    public void System_reins_in_a_stronger_player_without_dethroning_them(int seed)
+    {
+        // AI0 gets +50% production and commerce; compare its lead over the median rival with and without the system
+        static double Lead(Game g) => g.P(0).ScienceLevel /
+            AntiSnowball.Median(g.Active.Where(p => p.Id != 0).Select(p => (double)p.ScienceLevel).ToList());
+        double on = Lead(Simulation.Run(400, 6, seed, false, null, false, 1.5));
+        double off = Lead(Simulation.Run(400, 6, seed, true, null, false, 1.5));
+        Assert.True(on < off * 0.7, $"lead with system {on:F2} vs without {off:F2}");
+        Assert.True(on > 1.05, $"the stronger player should still be ahead ({on:F2})");
+    }
+
     [Fact]
     public void Balance_can_be_switched_off()
     {

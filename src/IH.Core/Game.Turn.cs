@@ -177,7 +177,8 @@ public sealed partial class Game
             else
             {
                 c.FoodRate = f - 2 * c.Pop;
-                c.ProdRate = (int)(pr * (1 + prodPct / 100 + 0.05 * p.Future[Rules.BranchNano]));
+                c.ProdRate = (int)(pr * p.Bonus * (1 + prodPct / 100 + 0.05 * p.Future[Rules.BranchNano]));
+                co = (int)Math.Round(co * p.Bonus);
                 c.Commerce = co;
                 double s = co * p.Slider / 100.0;
                 c.SciRate = s * (1 + sciPct / 100 + 0.05 * p.Future[Rules.BranchQuantum]) * p.SciMult;

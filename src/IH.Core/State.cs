@@ -15,7 +15,7 @@ public sealed class BalanceConfig
     public double UpkeepPenalty = 1.2;       // "logistic strain":    upkeep  x (1 + k*g + SprawlPenalty*sat(sprawl))
     public double SprawlPenalty = 0.5;
     public double UnrestPerPressure = 14;    // "social unrest": unrest points per turn per city at g = 1
-    public double SecessionPressure = 0.45;  // minimum g for separatism
+    public double SecessionPressure = 0.3;   // minimum g for separatism
     public int SecessionMinDistance = 6;
     public int SecessionChancePct = 35;
     // Laggard bonuses. lag = clamp((-ITR - LagDeadzone) * LagScale, 0, 1)
@@ -62,6 +62,8 @@ public sealed class Player
     public int[] Future = new int[4];
     public long TechPoints;
     public double SciFrac;
+    /// <summary>Handicap: multiplier on production and commerce (1 = normal). Used for AI difficulty and balance experiments.</summary>
+    public double Bonus = 1;
     public bool Connected = true;
     // fog-of-war memory
     public ulong[] KnownTiles = Array.Empty<ulong>();

@@ -137,6 +137,23 @@ public static class Rules
         new("nano_trooper", "Нанодесант", 420, 42, 2, "f0_1", CityDefPct: 25),
     };
 
+    /// <summary>Best unit this one can be upgraded to (same mobility class, stronger, tech known); -1 if none.</summary>
+    public static int UpgradeTarget(int type, Func<string?, bool> knows)
+    {
+        var d = Units[type];
+        if (d.Role != UnitRole.Military) return -1;
+        int best = -1;
+        for (int i = 0; i < Units.Length; i++)
+        {
+            var u = Units[i];
+            if (u.Role == UnitRole.Military && u.Moves == d.Moves && u.Str > d.Str && knows(u.Tech) && (best < 0 || u.Str > Units[best].Str))
+                best = i;
+        }
+        return best;
+    }
+
+    public static int UpgradePrice(int from, int to) => Math.Max(10, (Units[to].Cost - Units[from].Cost) * 2);
+
     public static int UnitIndex(string id) => Array.FindIndex(Units, u => u.Id == id);
 
     // ------------------------------------------------------------ buildings

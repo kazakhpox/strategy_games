@@ -168,6 +168,7 @@ public sealed partial class Game
                 var u = Own(p, c.A, out var err); if (u == null) return err;
                 RemoveUnit(u); CheckDefeat(pid); return null;
             }
+            case CmdType.Upgrade: return CmdUpgrade(p, c.A);
             case CmdType.SetProduction: return CmdProduction(p, c.A, c.S, c.B);
             case CmdType.RemoveQueue:
             {
@@ -443,6 +444,20 @@ public sealed partial class Game
         if (!p.Has(tech)) return $"Нужна технология: {Rules.Tech(tech)?.Name}";
         if (t.Owner != p.Id && !(kind == WorkKind.Road && t.Owner < 0)) return "Улучшать можно только свою территорию";
         u.Work = kind; u.WorkTurns = Rules.WorkTurns(kind); u.Moves = 0; u.Goto = -1; u.Fortified = false;
+        return null;
+    }
+
+    private string? CmdUpgrade(Player p, int unitId)
+    {
+        var u = Own(p, unitId, out var err); if (u == null) return err;
+        int to = Rules.UpgradeTarget(u.Type, p.Has);
+        if (to < 0) return "Этот юнит пока нельзя улучшить";
+        if (S.Tiles[u.Tile].Owner != p.Id) return "Улучшать юниты можно только на своей территории";
+        if (u.Moves <= 0) return "У юнита не осталось очков движения";
+        int price = Rules.UpgradePrice(u.Type, to);
+        if (p.Gold < price) return $"Недостаточно золота (нужно {price})";
+        p.Gold -= price;
+        u.Type = to; u.Moves = 0; u.Goto = -1;
         return null;
     }
 

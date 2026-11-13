@@ -10,6 +10,7 @@ var opt = new ServerOptions();
 string? load = null;
 bool sim = false, noBalance = false;
 int simTurns = 300, simPlayers = 6, simSeed = 1;
+double simStrong = 1;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -27,18 +28,19 @@ for (int i = 0; i < args.Length; i++)
         case "--players": simPlayers = int.Parse(Next()); break;
         case "--seed": simSeed = int.Parse(Next()); break;
         case "--no-balance": noBalance = true; break;
+        case "--strong": simStrong = double.Parse(Next(), System.Globalization.CultureInfo.InvariantCulture); break;
         case "--dump-balance": Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new BalanceConfig(),
             new System.Text.Json.JsonSerializerOptions { IncludeFields = true, WriteIndented = true })); return 0;
         case "-h" or "--help":
             Console.WriteLine("IH.Server [--port 27015] [--saves DIR] [--autosave N] [--afk SEC] [--balance FILE] [--load SAVE]");
-            Console.WriteLine("IH.Server --sim [--turns 300] [--players 6] [--seed 1] [--no-balance]");
+            Console.WriteLine("IH.Server --sim [--turns 300] [--players 6] [--seed 1] [--no-balance] [--strong 1.5]");
             Console.WriteLine("IH.Server --dump-balance   (печатает коэффициенты баланса по умолчанию в JSON)");
             return 0;
         default: Console.Error.WriteLine($"Неизвестный параметр: {args[i]}"); return 2;
     }
 }
 
-if (sim) { Simulation.Run(simTurns, simPlayers, simSeed, noBalance, opt.Balance); return 0; }
+if (sim) { Simulation.Run(simTurns, simPlayers, simSeed, noBalance, opt.Balance, true, simStrong); return 0; }
 
 var server = new GameServer(opt);
 server.Start();
@@ -65,11 +67,12 @@ public static class Simulation
         CatchUpStrength = 0, EchoBase = 0, EchoOpenBorders = 0,
     };
 
-    public static Game Run(int turns, int players, int seed, bool noBalance, BalanceConfig? balance, bool print = true)
+    public static Game Run(int turns, int players, int seed, bool noBalance, BalanceConfig? balance, bool print = true, double strong = 1)
     {
         var settings = new GameSettings { Name = "sim", MapW = 64, MapH = 40, Seed = seed, Simultaneous = true };
         var list = Enumerable.Range(0, players).Select(i => ($"AI{i}", true)).ToList();
         var g = Game.Create(settings, list, noBalance ? Off() : balance);
+        g.P(0).Bonus = strong; // AI0 plays with a handicap in its favour to provoke a runaway leader
         int protests = 0, secessions = 0, wars = 0, captures = 0;
         if (print) Console.WriteLine($"Симуляция: {players} ИИ, {turns} ходов, seed {seed}, анти-сноуболл {(noBalance ? "ВЫКЛ" : "ВКЛ")}");
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -97,7 +100,7 @@ public static class Simulation
         {
             var lv = g.Active.Select(p => (double)p.ScienceLevel).OrderByDescending(x => x).ToList();
             double med = AntiSnowball.Median(lv.ToList());
-            Console.WriteLine($"Итог: лидер/медиана по науке = {lv.Max() / Math.Max(1, med):F2}, лидер/аутсайдер = {lv.Max() / Math.Max(1, lv.Min()):F2}; " +
+            Console.WriteLine($"Итог: AI0/медиана = {g.P(0).ScienceLevel / Math.Max(1, AntiSnowball.Median(g.Active.Where(p => p.Id != 0).Select(p => (double)p.ScienceLevel).ToList())):F2}; лидер/медиана по науке = {lv.Max() / Math.Max(1, med):F2}, лидер/аутсайдер = {lv.Max() / Math.Max(1, lv.Min()):F2}; " +
                               $"войн {wars}, захватов {captures}, протестов {protests}, отделений {secessions}; вольных городов {g.CitiesOf(g.Neutral.Id).Count()}; {sw.ElapsedMilliseconds} мс");
         }
         return g;

@@ -375,6 +375,15 @@ public partial class GameScreen : Control
             }
         if (u.Fortified || u.Work != 0 || u.Goto >= 0) row.AddChild(Ui.Btn("Отменить приказ", () => UnitCommand(CmdType.Wake)));
         else row.AddChild(Ui.Btn(def.Str > 0 ? "Укрепиться (F)" : "Спать (F)", () => UnitCommand(CmdType.Fortify)));
+        int upTo = Rules.UpgradeTarget(u.Type, W.Knows);
+        if (upTo >= 0 && W.Tiles[u.Tile].Owner == W.MyId)
+        {
+            int price = Rules.UpgradePrice(u.Type, upTo);
+            var up = Ui.Btn($"Улучшить: {Rules.Units[upTo].Name} ({price} зол.)", () => UnitCommand(CmdType.Upgrade),
+                "Юнит заменяется современным аналогом; тратит ход. Только на своей территории");
+            up.Disabled = W.Me.Gold < price || u.Moves <= 0;
+            row.AddChild(up);
+        }
         row.AddChild(Ui.Btn("Пропустить (Пробел)", SkipUnit));
         int id = u.Id;
         row.AddChild(Ui.Btn(_confirmDisband == id ? "Точно распустить?" : "Распустить", () =>
