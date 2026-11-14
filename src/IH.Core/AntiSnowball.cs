@@ -97,6 +97,7 @@ public static class AntiSnowball
             double share = g.Bal.EchoBase + (rel.OpenBorders ? g.Bal.EchoOpenBorders : 0) + (g.SameFaith(p.Id, o.Id) ? 0.02 : 0);
             echo += o.SciRate * share * gap;
         }
+        if (g.S.Resolution == "exchange") echo *= 2; // congress resolution: scientific exchange
         return Math.Min(echo, g.Bal.EchoCap * p.SciRate + 2);
     }
 }

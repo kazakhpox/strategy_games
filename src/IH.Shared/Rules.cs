@@ -223,7 +223,7 @@ public static class Rules
 
     private static readonly BuildingDef[] BaseBuildings =
     {
-        new("palace", "Дворец", 0, null) { Commerce = 6, Culture = 2, Happy = 1, Calm = 2, Faith = 1 },
+        new("palace", "Дворец", 0, null) { Commerce = 6, Culture = 2, Happy = 1, Calm = 2, Faith = 2 },
         new("shrine", "Святилище", 40, "mysticism") { Faith = 2 },
         new("monument", "Монумент", 30, "mysticism") { Culture = 2 },
         new("granary", "Амбар", 60, "pottery") { Food = 2, Upkeep = 1, With = new[] { Resource.Wheat, Resource.Rice, Resource.Maize }, WithFood = 1 },
@@ -508,6 +508,59 @@ public static class Rules
             default: return false;
         }
     }
+
+    // --------------------------------------------------------------- combat
+    /// <summary>
+    /// The melee duel in numbers. Server and client share it, so the odds a player is shown before
+    /// attacking come from the same formula the server then rolls with.
+    /// </summary>
+    /// <param name="a">attacker strength, already scaled by its health and modifiers</param>
+    /// <param name="d">defender strength, likewise</param>
+    public static (int dmgToDefender, int dmgToAttacker, double winChance) Duel(double a, double d, int attackerHp, int defenderHp)
+    {
+        if (d <= 0.0001) return (100, 0, 1);
+        if (a <= 0.0001) return (0, 100, 0);
+        int dmgDef = (int)Math.Clamp(20 * (3 * a + d) / (3 * d + a), 6, 60);
+        int dmgAtt = (int)Math.Clamp(20 * (3 * d + a) / (3 * a + d), 6, 60);
+        double p = a / (a + d);
+        int need = (defenderHp + dmgDef - 1) / dmgDef, lives = (attackerHp + dmgAtt - 1) / dmgAtt;
+        // the attacker wins if it lands `need` hits before taking `lives`: a negative binomial sum
+        double win = 0, term = Math.Pow(p, need);
+        for (int k = 0; k < lives; k++)
+        {
+            win += term;
+            term *= (need + k) / (double)(k + 1) * (1 - p);
+        }
+        return (dmgDef, dmgAtt, Math.Clamp(win, 0, 1));
+    }
+
+    /// <summary>Damage of a ranged shot or a tower volley of strength a against defence d.</summary>
+    public static int RangedDamage(double a, double d) => (int)Math.Clamp(25 * (3 * a + d) / (3 * Math.Max(0.1, d) + a), 8, 70);
+
+    // ------------------------------------------------- milestones, congress
+    public sealed record MilestoneDef(string Id, string Name);
+
+    /// <summary>World firsts: an endless game still needs things to race for. Each goes to one civilisation only.</summary>
+    public static readonly MilestoneDef[] Milestones =
+    {
+        new("cities3", "Три города"), new("religion", "Первая религия"), new("era1", "Вступление в Античность"),
+        new("civics6", "Шесть социальных институтов"), new("pop25", "25 жителей"), new("ocean", "Выход в океан (Астрономия)"),
+        new("era2", "Вступление в Средневековье"), new("branch", "Особая ветка освоена целиком"), new("era4", "Индустриальная эра"),
+        new("era6", "Информационная эра"), new("future", "Первая технология будущего"),
+    };
+    public const int MilestoneFavor = 25;
+
+    public sealed record ResolutionDef(string Id, string Name, string Effect);
+
+    /// <summary>Resolutions the congress puts to a vote, one per session, in this order.</summary>
+    public static readonly ResolutionDef[] Resolutions =
+    {
+        new("exchange", "Научный обмен", "научное эхо для всех удваивается"),
+        new("aid", "Помощь отстающим", "державы, отстающие от мира, получают +15% производства"),
+        new("trade", "Свободная торговля", "+10% золота всем, у кого есть открытые границы хотя бы с одной державой"),
+        new("peace", "Осуждение войн", "усталость от войны начинается с первого же хода любой войны"),
+    };
+    public static ResolutionDef? Resolution(string? id) => Array.Find(Resolutions, r => r.Id == id);
 
     public static int CultureForRadius(int radius) => radius switch { <= 1 => 0, 2 => 20, 3 => 120, 4 => 500, _ => int.MaxValue };
     public static int RadiusForCulture(int culture) => culture >= 500 ? 4 : culture >= 120 ? 3 : culture >= 20 ? 2 : 1;

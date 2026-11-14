@@ -240,6 +240,12 @@ public sealed partial class Game
                 p.BranchCurrent[branch.Id] = node.Id; return null;
             }
             case CmdType.Cast: return CmdCast(p, c.S, c.A, c.B);
+            case CmdType.VoteResolution:
+                if (c.B <= 0 || p.Favor < c.B) return "Недостаточно дипломатического одобрения";
+                p.Favor -= c.B;
+                int weight = (int)Math.Round(c.B * (1 + p.Lag)); // as with the chair, laggards are heard better
+                if (c.A != 0) S.VotesFor += weight; else S.VotesAgainst += weight;
+                return null;
             case CmdType.FoundReligion: return CmdFoundReligion(p, c.A, c.B);
             case CmdType.Recruit: return CmdRecruit(p, c.A);
             case CmdType.Preach: return CmdPreach(p, c.A);
@@ -409,7 +415,7 @@ public sealed partial class Game
         var def = defenders.OrderByDescending(DefenseStr).ThenBy(x => x.Id).First();
         double scale = att.Def.Str > 0 ? FieldStr(att) / att.Def.Str : 1;
         double a = att.Def.X.RangedStr * scale * att.Hp / 100.0, d = Math.Max(0.1, DefenseStr(def));
-        int dmg = (int)Math.Clamp(25 * (3 * a + d) / (3 * d + a), 8, 70);
+        int dmg = Rules.RangedDamage(a, d);
         int defOwner = def.Owner;
         def.Hp -= dmg;
         bool killed = def.Hp <= 0;
@@ -423,8 +429,7 @@ public sealed partial class Game
         var def = defenders.OrderByDescending(DefenseStr).ThenBy(x => x.Id).First();
         double a = FieldStr(att) * att.Hp / 100.0 * (Embarked(att) ? 0.5 : 1), d = DefenseStr(def);
         int pA = (int)(1000 * a / (a + d));
-        int dmgDef = (int)Math.Clamp(20 * (3 * a + d) / (3 * d + a), 6, 60);
-        int dmgAtt = (int)Math.Clamp(20 * (3 * d + a) / (3 * a + d), 6, 60);
+        var (dmgDef, dmgAtt, _) = Rules.Duel(a, d, att.Hp, def.Hp);
         while (att.Hp > 0 && def.Hp > 0)
         {
             if (Rand(1000) < pA) def.Hp -= dmgDef; else att.Hp -= dmgAtt;

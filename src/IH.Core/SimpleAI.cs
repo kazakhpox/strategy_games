@@ -40,7 +40,18 @@ public static class SimpleAI
         }
         Faith(g, p);
         // shortly before each congress, back ourselves with half of the accumulated favor
-        if (g.S.Turn % Rules.CongressPeriod == Rules.CongressPeriod - 2 && p.Favor >= 10) Do(g, p, CmdType.Vote, p.Id, p.Favor / 2);
+        if (g.S.Turn % Rules.CongressPeriod == Rules.CongressPeriod - 2 && p.Favor >= 10)
+        {
+            Do(g, p, CmdType.Vote, p.Id, p.Favor / 2);
+            // the resolution: vote for what helps us, against what mostly helps others
+            bool atWar = g.Active.Any(q => q.Id != p.Id && g.Rel(p.Id, q.Id).AtWar);
+            bool good = g.S.Proposed switch
+            {
+                "aid" => p.Lag > 0, "exchange" => p.Itr < 0.1, "peace" => !atWar,
+                "trade" => g.Active.Any(q => q.Id != p.Id && g.Rel(p.Id, q.Id).OpenBorders), _ => true,
+            };
+            if (p.Favor >= 6) Do(g, p, CmdType.VoteResolution, good ? 1 : 0, p.Favor / 3);
+        }
         // faith finishes peaceful projects
         foreach (var c in g.CitiesOf(pid).ToList())
             if (c.Queue.Count > 0 && p.Faith >= 60 && Rules.FaithPrice(Rules.ItemCost(c.Queue[0]), c.Prod) is > 0 and var fp && fp <= p.Faith) Do(g, p, CmdType.BuyFaith, c.Id);

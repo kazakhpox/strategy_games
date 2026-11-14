@@ -22,6 +22,7 @@ public enum CmdType : byte
     Preach,         // A=unit: spend a missionary on the city it stands in
     SetNode,        // S=node id of a custom branch
     Cast,           // S=action id, A=caster unit (0 = the empire), B=target tile (-1 = none)
+    VoteResolution, // A=1 for / 0 against, B=favor to spend
 }
 
 public enum EventKind : byte
@@ -49,6 +50,8 @@ public enum EventKind : byte
     ReligionFounded, // A=player, B=religion id, S=name
     CityConverted,   // A=city, B=religion id (0 = none), S=city name
     NodeDone,        // S=node id
+    Milestone,       // A=player, S=milestone id
+    Resolution,      // S=resolution id, A=1 passed / 0 rejected, B=votes for, C=votes against
     Ranged,          // A=from tile, B=target tile, C=attacker owner, D=target owner, S="1" if the target died
 }
 
@@ -254,6 +257,11 @@ public sealed class MeDto : IWire
     public TechCostDto[] CivicCosts = Array.Empty<TechCostDto>(), NodeCosts = Array.Empty<TechCostDto>();
     // links between systems
     public int TradeLuxuries, WarWeariness, Brethren, StateReligion;
+    /// <summary>Owner of each world milestone, indexed like Rules.Milestones (-1 = still open).</summary>
+    public int[] Milestones = Array.Empty<int>();
+    /// <summary>Congress: the resolution in force, the one on the table, and the favor cast for and against it.</summary>
+    public string Resolution = "", Proposed = "";
+    public int VotesFor, VotesAgainst;
     public string Research = "";
     public string[] Known = Array.Empty<string>();
     public int[] Future = new int[4];
@@ -274,6 +282,7 @@ public sealed class MeDto : IWire
         w.A(ref Religions);
         w.SA(ref Nodes); w.SA(ref BranchCurrent); w.IA(ref BranchProgress); w.IA(ref BranchRate); w.IA(ref Cooldowns); w.IA(ref Power); w.IA(ref PowerRate);
         w.A(ref CivicCosts); w.A(ref NodeCosts); w.I(ref TradeLuxuries); w.I(ref WarWeariness); w.I(ref Brethren); w.I(ref StateReligion);
+        w.IA(ref Milestones); w.S(ref Resolution); w.S(ref Proposed); w.I(ref VotesFor); w.I(ref VotesAgainst);
     }
 }
 

@@ -138,6 +138,12 @@ public sealed class GameState
     /// <summary>World congress: favor spent per candidate this session, and the current chair.</summary>
     public Dictionary<int, int> Votes = new();
     public int Chair = -1;
+    /// <summary>Milestone id -> the player who reached it first.</summary>
+    public Dictionary<string, int> Milestones = new();
+    /// <summary>Resolution in force until the next session (null = none), the one being voted on, and the favor cast.</summary>
+    public string? Resolution;
+    public string Proposed = Rules.Resolutions[0].Id;
+    public int VotesFor, VotesAgainst;
     public List<Religion> Religions = new();
 }
 

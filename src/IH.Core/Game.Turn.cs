@@ -121,7 +121,15 @@ public sealed partial class Game
             S.Chair = winner;
             S.Votes.Clear();
             Emit(EventKind.Congress, winner, best);
+            // ...and decides the resolution on the table; the next one in line is proposed for the following session
+            bool passed = S.VotesFor > S.VotesAgainst;
+            Emit(EventKind.Resolution, passed ? 1 : 0, S.VotesFor, S.VotesAgainst, s: S.Proposed);
+            S.Resolution = passed ? S.Proposed : null;
+            int next = (Array.FindIndex(Rules.Resolutions, r => r.Id == S.Proposed) + 1) % Rules.Resolutions.Length;
+            S.Proposed = Rules.Resolutions[next].Id;
+            S.VotesFor = S.VotesAgainst = 0;
         }
+        AwardMilestones();
         foreach (var u in UnitsOf(Neutral.Id)) u.Hp = Math.Min(100, u.Hp + 10);
         foreach (var c in CitiesOf(Neutral.Id)) c.Culture += 1;
         RecomputeBorders();
@@ -156,14 +164,15 @@ public sealed partial class Game
         p.Luxuries = connected.Count(r => Rules.Res((Resource)r).Class == ResClass.Luxury);
         // links to other players: luxuries traded over open borders, long wars, shared faith
         var foreignLux = new HashSet<int>();
-        int weariness = 0, brethren = 0;
+        int weariness = 0, brethren = 0, tradePartners = 0;
         foreach (var o in Active)
         {
             if (o.Id == p.Id) continue;
             var rel = Rel(p.Id, o.Id);
-            if (rel.AtWar) { if (S.Turn - rel.SinceTurn > Rules.WarWearinessAfter) weariness++; continue; }
+            if (rel.AtWar) { if (S.Resolution == "peace" || S.Turn - rel.SinceTurn > Rules.WarWearinessAfter) weariness++; continue; }
             if (rel.Met && SameFaith(p.Id, o.Id)) brethren++;
             if (!rel.OpenBorders) continue;
+            tradePartners++;
             foreach (int r in o.Resources)
                 if (Rules.Res((Resource)r).Class == ResClass.Luxury && !connected.Contains(r)) foreignLux.Add(r);
         }
@@ -189,6 +198,9 @@ public sealed partial class Game
             int foodFlat = fx.Food + (bel?.Food ?? 0), comFlat = 0, culFlat = 1 + fx.Culture + (bel?.Culture ?? 0);
             double prodPct = fx.ProdPct + (bel?.ProdPct ?? 0), sciPct = fx.SciPct + (bel?.SciPct ?? 0), goldPct = fx.GoldPct + (bel?.GoldPct ?? 0);
             double culPct = fx.CulPct + (bel?.CulPct ?? 0), maintCut = 0, upkeep = 0, cityFaith = 0, foodPct = 0;
+            // congress resolutions in force
+            if (S.Resolution == "aid" && p.Lag > 0) prodPct += 15;
+            if (S.Resolution == "trade" && tradePartners > 0) goldPct += 10;
             foreach (var buff in c.Buffs)
             {
                 if (buff.Until <= S.Turn) continue;
@@ -420,6 +432,36 @@ public sealed partial class Game
             }
         }
         RefreshEconomy(p);
+    }
+
+    /// <summary>World firsts: checked once per global turn; each milestone goes to the first civilisation to qualify.</summary>
+    private void AwardMilestones()
+    {
+        foreach (var m in Rules.Milestones)
+        {
+            if (S.Milestones.ContainsKey(m.Id)) continue;
+            foreach (var p in Active.OrderBy(x => x.Id).ToList())
+            {
+                int era = Rules.EraOf(p.Known, p.Future);
+                bool done = m.Id switch
+                {
+                    "cities3" => CitiesOf(p.Id).Count() >= 3,
+                    "religion" => FoundedBy(p.Id) != null,
+                    "civics6" => p.Civics.Count >= 6,
+                    "pop25" => CitiesOf(p.Id).Sum(c => c.Pop) >= 25,
+                    "ocean" => p.Has("astronomy"),
+                    "branch" => Rules.Branches.Any(b => b.Nodes.Length > 0 && b.Nodes.All(n => p.Nodes.Contains(n.Id))),
+                    "future" => p.Future.Any(f => f > 0),
+                    "era1" => era >= 1, "era2" => era >= 2, "era4" => era >= 4, "era6" => era >= 6,
+                    _ => false,
+                };
+                if (!done) continue;
+                S.Milestones[m.Id] = p.Id;
+                p.Favor += Rules.MilestoneFavor;
+                Emit(EventKind.Milestone, p.Id, s: m.Id);
+                break;
+            }
+        }
     }
 
     /// <summary>End-of-turn mechanics that come from branch content: summons fading, auras, bombardment, power income.</summary>

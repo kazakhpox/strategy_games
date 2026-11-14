@@ -168,6 +168,8 @@ public sealed partial class Game
                 Cities = S.Cities.Values.Count(c => c.Religion == r.Id),
             }).ToArray(),
             Faith = p.Faith, FaithRate = (int)p.FaithRate, Favor = p.Favor, FavorRate = (int)p.FavorRate, Luxuries = p.Luxuries,
+            Milestones = Rules.Milestones.Select(m => S.Milestones.TryGetValue(m.Id, out int who) ? who : -1).ToArray(),
+            Resolution = S.Resolution ?? "", Proposed = S.Proposed, VotesFor = S.VotesFor, VotesAgainst = S.VotesAgainst,
             Chair = S.Chair, CongressIn = Rules.CongressPeriod - S.Turn % Rules.CongressPeriod,
             Resources = p.Resources.ToArray(),
             Votes = S.Players.Select(o => S.Votes.GetValueOrDefault(o.Id)).ToArray(),

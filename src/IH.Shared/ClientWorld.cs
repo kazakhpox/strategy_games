@@ -118,6 +118,14 @@ public sealed class ClientWorld
                 var rel = Me.Religions.FirstOrDefault(r => r.Id == e.B);
                 return rel == null ? $"Город {e.S} больше не следует ни одной религии" : $"Город {e.S} принял религию «{rel.Name}»";
             }
+            case EventKind.Milestone:
+                return $"Мировое достижение: «{PlayerName(e.A)}» — {Array.Find(Rules.Milestones, m => m.Id == e.S)?.Name ?? e.S} (+{Rules.MilestoneFavor} одобрения)";
+            case EventKind.Resolution:
+            {
+                var r = Rules.Resolution(e.S);
+                return e.A == 1 ? $"Конгресс принял резолюцию «{r?.Name}» ({e.B} за, {e.C} против): {r?.Effect}"
+                    : $"Конгресс отклонил резолюцию «{r?.Name}» ({e.B} за, {e.C} против)";
+            }
             case EventKind.Congress:
                 return e.A < 0 ? "Всемирный конгресс: голосов не подано, председатель не избран"
                     : $"Всемирный конгресс: председателем избран «{PlayerName(e.A)}» ({e.B} голосов) — +10% золота и культуры на {Rules.CongressPeriod} ходов";
