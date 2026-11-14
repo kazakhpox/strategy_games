@@ -8,7 +8,7 @@ using TileData = IH.Shared.TileData;
 
 namespace IH.Client;
 
-public enum Win { None, City, Science, Economy, Diplomacy, Demographics, Civics, Religion }
+public enum Win { None, City, Science, Economy, Diplomacy, Demographics, Civics, Religion, Branches }
 
 /// <summary>In-game screen: map, HUD, advisors. Sends commands; all rules are decided by the server.</summary>
 public partial class GameScreen : Control
@@ -66,9 +66,10 @@ public partial class GameScreen : Control
         var topRow = Ui.H(12, _turn, _gold, _extra, _itr, _science,
             Ui.Btn("Наука", () => Toggle(Win.Science), "Наука и дерево технологий (F6)"),
             Ui.Btn("Культура", () => Toggle(Win.Civics), "Социальные институты (F7)"), Ui.Btn("Религия", () => Toggle(Win.Religion), "F8"),
+            Ui.Btn("Ветки", () => Toggle(Win.Branches), "Особые ветки развития: магия, шаманство и ваши собственные (F10)"),
             Ui.Btn("Экономика", () => Toggle(Win.Economy), "Экономика (F2); демография — F9"),
             Ui.Btn("Дипломатия", () => Toggle(Win.Diplomacy), "Дипломатия и Всемирный конгресс (F4)"),
-            Ui.Btn("Выйти", () => Net.Send(MsgType.LeaveGame), "Покинуть игру. Место сохранится — вернуться можно из списка игр под тем же именем"));
+            Ui.Btn("✕", () => Net.Send(MsgType.LeaveGame), "Покинуть игру. Место сохранится — вернуться можно из списка игр под тем же именем"));
         top.AddChild(topRow);
         _itr.MouseFilter = MouseFilterEnum.Stop;
 
@@ -153,7 +154,7 @@ public partial class GameScreen : Control
             bool bad = e.Type is EventKind.Protest or EventKind.Secession or EventKind.Bankrupt or EventKind.WarDeclared;
             Log(text, bad ? Ui.Bad : e.Type == EventKind.TechDone ? Ui.Science : Colors.White);
             if (e.Type == EventKind.Proposal) Toggle(Win.Diplomacy, true);
-            if (e.Type is EventKind.CivicDone or EventKind.ReligionFounded) Sound.Play(Sfx.Id.Tech);
+            if (e.Type is EventKind.CivicDone or EventKind.ReligionFounded or EventKind.NodeDone) Sound.Play(Sfx.Id.Tech);
             switch (e.Type)
             {
                 case EventKind.TechDone: Sound.Play(Sfx.Id.Tech); break;
@@ -251,6 +252,7 @@ public partial class GameScreen : Control
             case Key.F9: Toggle(Win.Demographics); break;
             case Key.F7: Toggle(Win.Civics); break;
             case Key.F8: Toggle(Win.Religion); break;
+            case Key.F10: Toggle(Win.Branches); break;
             case Key.P: UnitCommand(CmdType.Preach); break;
             default: return;
         }
@@ -509,6 +511,7 @@ public partial class GameScreen : Control
             case Win.Demographics: BuildDemographics(); break;
             case Win.Civics: BuildCivics(); break;
             case Win.Religion: BuildReligion(); break;
+            case Win.Branches: BuildBranches(); break;
         }
         if (!_scrollToFrontier || (_win != Win.Science && _win != Win.Civics)) _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollHorizontal, scrollX);
         _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollVertical, scroll);
@@ -517,7 +520,7 @@ public partial class GameScreen : Control
     private void Add(Control c)
     {
         // long explanations wrap instead of stretching the window sideways
-        if (c is Label { Text.Length: > 95 } l) { l.AutowrapMode = TextServer.AutowrapMode.WordSmart; l.CustomMinimumSize = new Vector2(780, 0); }
+        if (c is Label { Text.Length: > 95 } l) { l.AutowrapMode = TextServer.AutowrapMode.WordSmart; l.CustomMinimumSize = new Vector2(780, 0); l.SizeFlagsHorizontal = SizeFlags.ShrinkBegin; }
         _windowBody.AddChild(c);
     }
     private void Heading(string text) { Add(new HSeparator()); Add(Ui.Lbl(text, 16, Ui.Gold)); }
@@ -704,6 +707,44 @@ public partial class GameScreen : Control
             b.CustomMinimumSize = new Vector2(380, 0);
             Add(Ui.H(12, b, Ui.Lbl(c.Effect.Describe(), 12, Ui.Dim)));
         }
+    }
+
+    private int _branchTab;
+
+    private void BuildBranches()
+    {
+        var me = W.Me;
+        _windowTitle.Text = "Ветки развития";
+        if (Rules.Branches.Count == 0)
+        {
+            Add(Ui.Lbl("В этой игре нет особых веток. Хост может добавить их файлами в папке модов (кнопка «Папка модов» в главном меню).", 14, Ui.Dim));
+            return;
+        }
+        _branchTab = Math.Clamp(_branchTab, 0, Rules.Branches.Count - 1);
+        var tabs = new HFlowContainer();
+        for (int i = 0; i < Rules.Branches.Count; i++)
+        {
+            int idx = i;
+            var b = Rules.Branches[i];
+            int done = b.Nodes.Count(n => me.Nodes.Contains(n.Id));
+            var have = new HashSet<string>(me.Nodes);
+            bool canPick = b.Nodes.Any(n => !have.Contains(n.Id) && n.Requires.All(r => Rules.Satisfied(r, me.Known, me.Future, me.Civics, me.CivicLevel, have)));
+            bool idle = (i >= me.BranchCurrent.Length || me.BranchCurrent[i].Length == 0) && canPick;
+            tabs.AddChild(Ui.Btn($"{(i == _branchTab ? "● " : "")}{b.Name} {done}/{b.Nodes.Length}{(idle ? " — не выбрано!" : "")}",
+                () => { _branchTab = idx; _windowScroll.ScrollHorizontal = 0; RebuildWindow(); }, size: 15));
+        }
+        Add(tabs);
+        var br = Rules.Branches[_branchTab];
+        int rate = _branchTab < me.BranchRate.Length ? me.BranchRate[_branchTab] : 0;
+        int progress = _branchTab < me.BranchProgress.Length ? me.BranchProgress[_branchTab] : 0;
+        var cur = Rules.Node(_branchTab < me.BranchCurrent.Length ? me.BranchCurrent[_branchTab] : "");
+        if (br.Description.Length > 0) Add(Ui.Lbl(br.Description, 13, Ui.Dim));
+        Add(Ui.Lbl($"Растёт от: {br.Fuel()} — сейчас +{rate} очк. за ход. Ветки идут параллельно с наукой и институтами и ничего у них не отнимают.", 13));
+        Add(Ui.Lbl(cur != null ? $"Сейчас осваивается: {cur.Name} ({progress}/{cur.Cost})" : $"Ничего не осваивается — очки копятся ({progress}).", 15, cur != null ? Ui.Gold : Ui.Bad));
+        var total = Rules.NodeBonus(br.Nodes.Where(n => me.Nodes.Contains(n.Id)).Select(n => n.Id)).Describe();
+        if (total.Length > 0) Add(Ui.Lbl("Уже даёт: " + total, 13, Ui.Good));
+        Add(TechGraph.ForBranch(me, _branchTab, id => Net.SendCommand(CmdType.SetNode, s: id)));
+        Add(Ui.Lbl("Серый узел с подписью «нужно: …» ждёт технологию, институт или узел другой ветки. Наведите курсор, чтобы увидеть все требования и бонус.", 12, Ui.Dim));
     }
 
     private int _relName, _relBelief;

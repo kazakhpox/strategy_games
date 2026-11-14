@@ -11,6 +11,8 @@ public static class LocalServer
 
     public static bool Running => _pid > 0 && OS.IsProcessRunning(_pid);
     public static string SaveDir => OS.GetUserDataDir().PathJoin("saves");
+    /// <summary>Custom branch files; kept in the user's data folder so game updates never touch them.</summary>
+    public static string ModsDir => OS.GetUserDataDir().PathJoin("mods");
 
     /// <summary>Program and leading arguments, or null when no server build can be found.</summary>
     private static (string program, string[] args)? Locate()
@@ -58,7 +60,7 @@ public static class LocalServer
         DirAccess.MakeDirRecursiveAbsolute(SaveDir);
         var args = found.Value.args.ToList();
         // the server dies with the client, so save every turn
-        args.AddRange(new[] { "--port", port.ToString(), "--saves", SaveDir, "--autosave", "1" });
+        args.AddRange(new[] { "--port", port.ToString(), "--saves", SaveDir, "--autosave", "1", "--mods", ModsDir });
         if (!string.IsNullOrEmpty(loadPath)) { args.Add("--load"); args.Add(loadPath); }
         _pid = OS.CreateProcess(found.Value.program, args.ToArray());
         return _pid > 0 ? null : "Не удалось запустить сервер";

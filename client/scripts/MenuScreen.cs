@@ -116,6 +116,13 @@ public partial class MenuScreen : Control
         _roomBox = Ui.V(8, _roomTitle, _roomInfo, _slots,
             Ui.H(8, _startBtn, _readyBtn, Ui.Btn("Выйти", () => _main.Net.Send(MsgType.LeaveGame))));
         root.AddChild(_roomBox);
+        root.AddChild(Ui.Btn("Папка модов (свои ветки развития)", () =>
+        {
+            DirAccess.MakeDirRecursiveAbsolute(LocalServer.ModsDir);
+            OS.ShellOpen(LocalServer.ModsDir);
+            _status.AddThemeColorOverride("font_color", Ui.Dim);
+            _status.Text = "Папка: " + LocalServer.ModsDir + " — примеры появятся после первого «Создать сервер».";
+        }, "Ветки вроде «Магии» и «Шаманства» описаны JSON-файлами. Добавьте свой файл и создайте сервер заново.", 13));
         root.AddChild(_status);
         Refresh();
     }

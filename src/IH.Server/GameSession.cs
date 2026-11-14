@@ -164,7 +164,7 @@ public sealed class GameSession
 
     private GameStartMsg StartMsg(int slot) => new()
     {
-        GameId = Id, W = Game!.S.W, H = Game.S.H, YourId = slot, Settings = Settings,
+        GameId = Id, W = Game!.S.W, H = Game.S.H, YourId = slot, Settings = Settings, Branches = Rules.Branches.ToArray(),
     };
 
     // --------------------------------------------------------------- game

@@ -1,0 +1,202 @@
+{
+  "Id": "magic",
+  "Name": "Магия",
+  "Description": "От рун к высшей магии. Растёт от науки и веры; требует письменности, а алхимия и прорицание — знаний шаманов.",
+  "FromScience": 0.4,
+  "FromCulture": 0,
+  "FromFaith": 0.6,
+  "Enabled": true,
+  "Nodes": [
+    {
+      "Id": "mg_runes",
+      "Name": "Руны",
+      "Description": "",
+      "Cost": 40,
+      "Requires": [
+        "writing"
+      ],
+      "Effect": {
+        "SciPct": 5,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "mg_alchemy",
+      "Name": "Алхимия",
+      "Description": "",
+      "Cost": 80,
+      "Requires": [
+        "mg_runes",
+        "sh_herbs"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 10,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "mg_elements",
+      "Name": "Стихийная магия",
+      "Description": "",
+      "Cost": 120,
+      "Requires": [
+        "mg_runes"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 10,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "mg_wards",
+      "Name": "Обереги",
+      "Description": "",
+      "Cost": 150,
+      "Requires": [
+        "mg_runes",
+        "masonry"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 10,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "mg_divination",
+      "Name": "Прорицание",
+      "Description": "",
+      "Cost": 220,
+      "Requires": [
+        "mg_alchemy",
+        "sh_trance"
+      ],
+      "Effect": {
+        "SciPct": 10,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 1
+      }
+    },
+    {
+      "Id": "mg_enchant",
+      "Name": "Зачарование оружия",
+      "Description": "",
+      "Cost": 300,
+      "Requires": [
+        "mg_elements",
+        "iron_working"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 15,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "mg_academy",
+      "Name": "Академия магов",
+      "Description": "",
+      "Cost": 520,
+      "Requires": [
+        "mg_divination",
+        "mg_enchant",
+        "education"
+      ],
+      "Effect": {
+        "SciPct": 15,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 10,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "mg_arcane",
+      "Name": "Высшая магия",
+      "Description": "",
+      "Cost": 900,
+      "Requires": [
+        "mg_academy",
+        "c_humanism"
+      ],
+      "Effect": {
+        "SciPct": 10,
+        "GoldPct": 10,
+        "ProdPct": 10,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 1,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    }
+  ]
+}

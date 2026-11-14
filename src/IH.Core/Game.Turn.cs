@@ -157,6 +157,7 @@ public sealed partial class Game
         bool chair = S.Chair == p.Id;
         double faith = 0, culture = 0;
         var fx = Rules.CivicBonus(p.Civics, p.CivicLevel);
+        fx.Add(Rules.NodeBonus(p.Nodes)); // custom branches use the same kinds of bonus
         p.CivicFx = fx;
         var founded = FoundedBy(p.Id);
 
@@ -256,7 +257,9 @@ public sealed partial class Game
             var rel = Rel(p.Id, o.Id);
             if (rel.AtWar) atWar = true; else if (rel.OpenBorders) partners++;
         }
-        p.FavorRate = 1 + partners + (atWar ? 0 : 1) + fx.Favor; // peace and open borders earn diplomatic favor
+        p.FavorRate = 1 + partners + (atWar ? 0 : 1) + fx.Favor;
+        foreach (var b in Rules.Branches)
+            p.BranchRate[b.Id] = b.FromScience * sci + b.FromCulture * culture + b.FromFaith * faith; // peace and open borders earn diplomatic favor
         p.EchoBonus = AntiSnowball.Echo(this, p);
         p.GoldRate = (int)Math.Floor(p.Income - baseCost - p.StrainCost);
     }
@@ -318,6 +321,23 @@ public sealed partial class Game
         }
 
         p.Faith += (int)p.FaithRate;
+        foreach (var b in Rules.Branches)
+        {
+            int have = p.BranchProgress.GetValueOrDefault(b.Id) + (int)Math.Round(p.BranchRate.GetValueOrDefault(b.Id));
+            if (p.BranchCurrent.TryGetValue(b.Id, out var cur))
+            {
+                var node = Rules.Node(cur);
+                if (node == null || p.Nodes.Contains(cur)) p.BranchCurrent.Remove(b.Id); // the mod changed under a saved game
+                else if (have >= node.Cost)
+                {
+                    have -= node.Cost;
+                    p.Nodes.Add(node.Id);
+                    p.BranchCurrent.Remove(b.Id);
+                    Emit(EventKind.NodeDone, s: node.Id, only: p.Id);
+                }
+            }
+            p.BranchProgress[b.Id] = have;
+        }
         p.CivicProgress += (int)Math.Round(p.CultureRate);
         if (p.Civic != null)
         {

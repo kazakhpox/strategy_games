@@ -77,6 +77,11 @@ public sealed class Player
     public double CultureRate;
     /// <summary>Sum of all adopted institutions (derived every refresh).</summary>
     public Rules.Bonus CivicFx = new();
+    // custom branches: known node ids, and per branch id the node in progress, its points and income
+    public HashSet<string> Nodes = new();
+    public Dictionary<string, string> BranchCurrent = new();
+    public Dictionary<string, int> BranchProgress = new();
+    public Dictionary<string, double> BranchRate = new();
     public double FaithRate, FavorRate;
     /// <summary>Resources connected by this empire (derived every refresh).</summary>
     public List<int> Resources = new();

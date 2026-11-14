@@ -122,6 +122,8 @@ public sealed partial class Game
 
     /// <summary>Missionaries may walk into any territory; everyone else needs peace-time permission.</summary>
     public bool CanEnter(Unit u, int tile) => u.Def.Role == UnitRole.Missionary || CanEnterTerritory(u.Owner, tile);
+    /// <summary>Whether the player has a technology, a social institution or a custom branch node.</summary>
+    public bool Knows(Player p, string id) => Rules.Satisfied(id, p.Known, p.Future, p.Civics, p.CivicLevel, p.Nodes);
     public Religion? ReligionOf(int id) => id <= 0 ? null : S.Religions.FirstOrDefault(r => r.Id == id);
     public Religion? FoundedBy(int pid) => S.Religions.FirstOrDefault(r => r.Founder == pid);
     public bool IsMilitary(Unit u) => u.Def.Role == UnitRole.Military;
@@ -193,6 +195,16 @@ public sealed partial class Game
             case CmdType.SetCivic:
                 if (!Rules.AvailableCivics(p.Civics, p.CivicLevel).Any(x => x.Id == c.S)) return "Этот институт сейчас недоступен";
                 p.Civic = c.S; return null;
+            case CmdType.SetNode:
+            {
+                var node = Rules.Node(c.S);
+                var branch = node == null ? null : Rules.BranchOf(node.Id);
+                if (node == null || branch == null) return "Нет такого узла";
+                if (p.Nodes.Contains(node.Id)) return "Уже освоено";
+                var missing = node.Requires.Where(r => !Knows(p, r)).ToList();
+                if (missing.Count > 0) return "Сначала нужно: " + string.Join(", ", missing.Select(Rules.RequirementName));
+                p.BranchCurrent[branch.Id] = node.Id; return null;
+            }
             case CmdType.FoundReligion: return CmdFoundReligion(p, c.A, c.B);
             case CmdType.Recruit: return CmdRecruit(p, c.A);
             case CmdType.Preach: return CmdPreach(p, c.A);

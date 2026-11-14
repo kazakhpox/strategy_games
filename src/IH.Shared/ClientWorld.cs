@@ -21,6 +21,7 @@ public sealed class ClientWorld
 
     public ClientWorld(GameStartMsg start)
     {
+        Rules.SetBranches(start.Branches);
         Grid = new HexGrid(start.W, start.H);
         MyId = start.YourId;
         Settings = start.Settings;
@@ -103,6 +104,7 @@ public sealed class ClientWorld
             case EventKind.Proposal:
                 return $"«{PlayerName(e.A)}» предлагает: {(e.B == (int)ProposalKind.Peace ? "мир" : "открытые границы")}";
             case EventKind.Info: return e.S;
+            case EventKind.NodeDone: return $"{Rules.BranchOf(e.S)?.Name ?? "Ветка"}: освоено — {Rules.Node(e.S)?.Name ?? e.S}";
             case EventKind.CivicDone: return $"Принят институт: {Rules.Civic(e.S)?.Name ?? e.S}";
             case EventKind.ReligionFounded: return $"«{PlayerName(e.A)}» основывает религию «{e.S}»";
             case EventKind.CityConverted:

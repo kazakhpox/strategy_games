@@ -21,6 +21,13 @@ public static class SimpleAI
             var civic = Rules.AvailableCivics(p.Civics, p.CivicLevel).OrderBy(c => c.Cost).ThenBy(c => c.Id, StringComparer.Ordinal).First();
             Do(g, p, CmdType.SetCivic, s: civic.Id);
         }
+        foreach (var b in Rules.Branches)
+        {
+            if (p.BranchCurrent.ContainsKey(b.Id)) continue;
+            var next = b.Nodes.Where(n => !p.Nodes.Contains(n.Id) && n.Requires.All(r => g.Knows(p, r)))
+                .OrderBy(n => n.Cost).ThenBy(n => n.Id, StringComparer.Ordinal).FirstOrDefault();
+            if (next != null) Do(g, p, CmdType.SetNode, s: next.Id);
+        }
         Faith(g, p);
         // shortly before each congress, back ourselves with half of the accumulated favor
         if (g.S.Turn % Rules.CongressPeriod == Rules.CongressPeriod - 2 && p.Favor >= 10) Do(g, p, CmdType.Vote, p.Id, p.Favor / 2);

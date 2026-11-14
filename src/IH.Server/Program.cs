@@ -8,7 +8,7 @@ using IH.Shared;
 
 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* no console */ } // Cyrillic on any Windows code page
 var opt = new ServerOptions();
-string? load = null;
+string? load = null, mods = "mods";
 bool sim = false, noBalance = false;
 int simTurns = 300, simPlayers = 6, simSeed = 1;
 double simStrong = 1;
@@ -25,6 +25,16 @@ for (int i = 0; i < args.Length; i++)
         case "--afk": opt.AfkSeconds = int.Parse(Next()); break;
         case "--balance": opt.Balance = SaveGame.FromJson<BalanceConfig>(File.ReadAllText(Next())); break;
         case "--load": load = Next(); break;
+        case "--mods": mods = Next(); break;
+        case "--export-mods": { string d = Next(); ModLoader.Export(d); Console.WriteLine($"Примеры веток записаны в {Path.GetFullPath(d)}"); return 0; }
+        case "--list-ids":
+            Console.WriteLine("Технологии:");
+            foreach (var t in Rules.Techs) Console.WriteLine($"  {t.Id,-20} {t.Name}");
+            Console.WriteLine("Социальные институты:");
+            foreach (var c in Rules.Civics) Console.WriteLine($"  {c.Id,-20} {c.Name}");
+            Console.WriteLine("Узлы встроенных веток:");
+            foreach (var b in Rules.DefaultBranches()) foreach (var n in b.Nodes) Console.WriteLine($"  {n.Id,-20} {n.Name} ({b.Name})");
+            return 0;
         case "--sim": sim = true; break;
         case "--turns": simTurns = int.Parse(Next()); break;
         case "--players": simPlayers = int.Parse(Next()); break;
@@ -37,11 +47,16 @@ for (int i = 0; i < args.Length; i++)
         case "-h" or "--help":
             Console.WriteLine("IH.Server [--port 27015] [--saves DIR] [--autosave N] [--afk SEC] [--balance FILE] [--load SAVE]");
             Console.WriteLine("IH.Server --sim [--turns 300] [--players 6] [--seed 1] [--no-balance] [--strong 1.5] [--map 0|1|2]");
+            Console.WriteLine("IH.Server --mods DIR | --export-mods DIR | --list-ids   (свои ветки развития, см. README)");
             Console.WriteLine("IH.Server --dump-balance   (печатает коэффициенты баланса по умолчанию в JSON)");
             return 0;
         default: Console.Error.WriteLine($"Неизвестный параметр: {args[i]}"); return 2;
     }
 }
+
+// custom branches: created with examples on first run, then read on every start
+if (!sim && mods != null && !Directory.Exists(mods)) { try { ModLoader.Export(mods); } catch (IOException) { } }
+Rules.SetBranches(ModLoader.Load(mods, Console.WriteLine));
 
 if (sim) { Simulation.Run(simTurns, simPlayers, simSeed, noBalance, opt.Balance, true, simStrong, simMap); return 0; }
 

@@ -1,0 +1,176 @@
+{
+  "Id": "shamanism",
+  "Name": "Шаманство",
+  "Description": "Духи, травы и видения. Растёт от веры и культуры; переплетается с ранними технологиями и институтами.",
+  "FromScience": 0,
+  "FromCulture": 0.5,
+  "FromFaith": 1,
+  "Enabled": true,
+  "Nodes": [
+    {
+      "Id": "sh_spirits",
+      "Name": "Духи предков",
+      "Description": "",
+      "Cost": 30,
+      "Requires": [],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 1,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "sh_herbs",
+      "Name": "Травничество",
+      "Description": "",
+      "Cost": 50,
+      "Requires": [
+        "sh_spirits",
+        "agriculture"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 1,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "sh_totems",
+      "Name": "Тотемы",
+      "Description": "",
+      "Cost": 60,
+      "Requires": [
+        "sh_spirits",
+        "c_tribal"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 10,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "sh_trance",
+      "Name": "Транс и видения",
+      "Description": "",
+      "Cost": 110,
+      "Requires": [
+        "sh_herbs",
+        "sh_totems"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 25,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "sh_beast",
+      "Name": "Звериный облик",
+      "Description": "",
+      "Cost": 160,
+      "Requires": [
+        "sh_trance",
+        "hunting"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 10,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "sh_weather",
+      "Name": "Заклинание погоды",
+      "Description": "",
+      "Cost": 260,
+      "Requires": [
+        "sh_trance",
+        "c_rites"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 5,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 0,
+        "Food": 1,
+        "Culture": 0,
+        "Favor": 0
+      }
+    },
+    {
+      "Id": "sh_council",
+      "Name": "Совет предков",
+      "Description": "",
+      "Cost": 420,
+      "Requires": [
+        "sh_weather",
+        "sh_beast"
+      ],
+      "Effect": {
+        "SciPct": 0,
+        "GoldPct": 0,
+        "ProdPct": 0,
+        "CulPct": 0,
+        "FaithPct": 0,
+        "StrPct": 0,
+        "UpkeepCutPct": 0,
+        "Happy": 0,
+        "Calm": 2,
+        "Food": 0,
+        "Culture": 0,
+        "Favor": 1
+      }
+    }
+  ]
+}

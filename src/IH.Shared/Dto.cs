@@ -20,6 +20,7 @@ public enum CmdType : byte
     FoundReligion,  // A=name index, B=belief index
     Recruit,        // A=city: buy a missionary with faith
     Preach,         // A=unit: spend a missionary on the city it stands in
+    SetNode,        // S=node id of a custom branch
 }
 
 public enum EventKind : byte
@@ -46,6 +47,7 @@ public enum EventKind : byte
     CivicDone,       // S=civic id
     ReligionFounded, // A=player, B=religion id, S=name
     CityConverted,   // A=city, B=religion id (0 = none), S=city name
+    NodeDone,        // S=node id
 }
 
 public enum ProposalKind : byte { Peace, OpenBorders }
@@ -133,7 +135,9 @@ public sealed class CmdResultMsg : IWire
 public sealed class GameStartMsg : IWire
 {
     public int GameId, W, H, YourId; public GameSettings Settings = new();
-    public void Sync(Wire w) { w.I(ref GameId); w.I(ref W); w.I(ref H); w.I(ref YourId); Settings.Sync(w); }
+    /// <summary>Custom branches the host runs with; clients need no mod files of their own.</summary>
+    public Rules.BranchDef[] Branches = Array.Empty<Rules.BranchDef>();
+    public void Sync(Wire w) { w.I(ref GameId); w.I(ref W); w.I(ref H); w.I(ref YourId); Settings.Sync(w); w.A(ref Branches); }
 }
 
 // ------------------------------------------------------------- game state
@@ -233,6 +237,9 @@ public sealed class MeDto : IWire
     public string[] Civics = Array.Empty<string>();
     public int CivicProgress, CivicLevel, CultureRate, MyReligion;
     public ReligionDto[] Religions = Array.Empty<ReligionDto>();
+    // custom branches; the three arrays are indexed like Rules.Branches
+    public string[] Nodes = Array.Empty<string>(), BranchCurrent = Array.Empty<string>();
+    public int[] BranchProgress = Array.Empty<int>(), BranchRate = Array.Empty<int>();
     public string Research = "";
     public string[] Known = Array.Empty<string>();
     public int[] Future = new int[4];
@@ -251,6 +258,7 @@ public sealed class MeDto : IWire
         w.IA(ref Resources); w.IA(ref Votes);
         w.S(ref Civic); w.SA(ref Civics); w.I(ref CivicProgress); w.I(ref CivicLevel); w.I(ref CultureRate); w.I(ref MyReligion);
         w.A(ref Religions);
+        w.SA(ref Nodes); w.SA(ref BranchCurrent); w.IA(ref BranchProgress); w.IA(ref BranchRate);
     }
 }
 

@@ -52,9 +52,42 @@ public partial class TechGraph : Control
             id => Rules.Civic(id) is { } c ? Conv(c) : null, t => Rules.Civic(t.Id)?.Effect.Describe() ?? "", adopt);
     }
 
-    private TechGraph(IReadOnlyList<TechDef> tree, IReadOnlyList<TechDef> endless, HashSet<string> known, Dictionary<string, TechCostDto> avail,
-        string current, int rate, int progress, string unit, Func<string, TechDef?> lookup, Func<TechDef, string> unlocks, Action<string> research)
+    /// <summary>A custom (mod) branch. Requirements from other trees are not drawn as nodes; they show in the node text.</summary>
+    public static TechGraph ForBranch(MeDto me, int index, Action<string> pick)
     {
+        var b = Rules.Branches[index];
+        var own = b.Nodes.Select(n => n.Id).ToHashSet();
+        var nodes = new HashSet<string>(me.Nodes);
+        bool Met(string r) => Rules.Satisfied(r, me.Known, me.Future, me.Civics, me.CivicLevel, nodes);
+        TechDef Conv(Rules.NodeDef n) => new(n.Id, n.Name, n.Cost, 0, n.Requires.Where(own.Contains).ToArray());
+        var avail = b.Nodes.Where(n => !nodes.Contains(n.Id) && n.Requires.All(Met))
+            .ToDictionary(n => n.Id, n => new TechCostDto { Id = n.Id, Cost = n.Cost, BaseCost = n.Cost });
+        string Outside(TechDef t)
+        {
+            var missing = Rules.Node(t.Id)!.Requires.Where(r => !own.Contains(r) && !Met(r)).Select(Rules.RequirementName).ToList();
+            return missing.Count == 0 ? "" : "нужно: " + string.Join(", ", missing);
+        }
+        string Tip(TechDef t)
+        {
+            var n = Rules.Node(t.Id)!;
+            var outside = n.Requires.Where(r => !own.Contains(r)).Select(r => (Met(r) ? "✔ " : "✘ ") + Rules.RequirementName(r)).ToList();
+            return n.Effect.Describe() + (n.Description.Length > 0 ? "\n" + n.Description : "")
+                   + (outside.Count > 0 ? "\nИз других деревьев: " + string.Join(", ", outside) : "");
+        }
+        return new TechGraph(b.Nodes.Select(Conv).ToList(), new List<TechDef>(), nodes, avail,
+            index < me.BranchCurrent.Length ? me.BranchCurrent[index] : "", index < me.BranchRate.Length ? me.BranchRate[index] : 0,
+            index < me.BranchProgress.Length ? me.BranchProgress[index] : 0, "очк.",
+            id => Rules.Node(id) is { } n ? Conv(n) : null, Tip, pick, _ => "", Outside);
+    }
+
+    private readonly Func<int, string>? _header;
+    private readonly Func<TechDef, string>? _note;
+
+    private TechGraph(IReadOnlyList<TechDef> tree, IReadOnlyList<TechDef> endless, HashSet<string> known, Dictionary<string, TechCostDto> avail,
+        string current, int rate, int progress, string unit, Func<string, TechDef?> lookup, Func<TechDef, string> unlocks, Action<string> research,
+        Func<int, string>? header = null, Func<TechDef, string>? note = null)
+    {
+        _header = header; _note = note;
         _research = research; _unit = unit; _lookup = lookup; _unlocks = unlocks;
         _sciRate = rate; _progress = progress;
 
@@ -63,7 +96,7 @@ public partial class TechGraph : Control
             : depth[t.Id] = t.Prereqs.Length == 0 ? 0 : 1 + t.Prereqs.Max(p => Depth(lookup(p)!));
         foreach (var t in tree)
             Add(new Node { Tech = t, Col = Depth(t), Known = known.Contains(t.Id) });
-        int lastCol = _nodes.Max(n => n.Col);
+        int lastCol = _nodes.Max(n => n.Col) - (endless.Count == 0 ? 1 : 0);
         // the endless future branches: only the next level of each is shown, to the right of everything else
         foreach (var t in endless) Add(new Node { Tech = t, Col = lastCol + 1 });
         foreach (var n in _nodes) { n.Avail = avail.GetValueOrDefault(n.Tech.Id); n.Current = current == n.Tech.Id; }
@@ -129,7 +162,8 @@ public partial class TechGraph : Control
         foreach (var group in _nodes.GroupBy(n => n.Col))
         {
             int era = group.Min(n => n.Tech.Era);
-            DrawString(font, new Vector2(Pad + group.Key * (NodeW + GapX), Pad + 12), Rules.EraName(era), HorizontalAlignment.Left, NodeW, 12, Ui.Dim);
+            string head = _header != null ? _header(era) : Rules.EraName(era);
+            if (head.Length > 0) DrawString(font, new Vector2(Pad + group.Key * (NodeW + GapX), Pad + 12), head, HorizontalAlignment.Left, NodeW, 12, Ui.Dim);
         }
 
         // edges first, so the nodes sit on top of them
@@ -174,6 +208,7 @@ public partial class TechGraph : Control
                 if (n.Avail != null && _sciRate > 0)
                     sub += $" · {Math.Max(1, (cost - (n.Current ? _progress : Math.Min(_progress, cost)) + _sciRate - 1) / _sciRate)} х.";
                 if (n.Avail != null && n.Avail.Cost < n.Avail.BaseCost) sub += " ▼";
+                if (n.Avail == null && _note != null && _note(n.Tech) is { Length: > 0 } why) sub = why;
             }
             DrawString(font, n.Rect.Position + new Vector2(8, 35), sub, HorizontalAlignment.Left, NodeW - 14, 11, n.Known ? cGood : Ui.Dim);
             if (n.Current && n.Avail != null)

@@ -505,9 +505,14 @@ public static class Rules
 
     // --------------------------------------------------------------- civics
     /// <summary>Additive empire-wide bonuses; civics and religious beliefs are both expressed with it.</summary>
-    public sealed class Bonus
+    public sealed class Bonus : IWire
     {
         public int SciPct, GoldPct, ProdPct, CulPct, FaithPct, StrPct, UpkeepCutPct, Happy, Calm, Food, Culture, Favor;
+        public void Sync(Wire w)
+        {
+            w.I(ref SciPct); w.I(ref GoldPct); w.I(ref ProdPct); w.I(ref CulPct); w.I(ref FaithPct); w.I(ref StrPct);
+            w.I(ref UpkeepCutPct); w.I(ref Happy); w.I(ref Calm); w.I(ref Food); w.I(ref Culture); w.I(ref Favor);
+        }
         public void Add(Bonus o)
         {
             SciPct += o.SciPct; GoldPct += o.GoldPct; ProdPct += o.ProdPct; CulPct += o.CulPct; FaithPct += o.FaithPct; StrPct += o.StrPct;
@@ -600,6 +605,120 @@ public static class Rules
         var b = new Bonus();
         foreach (string id in known) if (CivicById.TryGetValue(id, out var c)) b.Add(c.Effect);
         for (int i = 0; i < level; i++) b.Add(FutureCivicStep);
+        return b;
+    }
+
+    // ------------------------------------------------- custom branches (mods)
+    /// <summary>One step of a custom development branch.</summary>
+    public sealed class NodeDef : IWire
+    {
+        public string Id = "", Name = "", Description = "";
+        public int Cost;
+        /// <summary>Ids that must be known first: technologies, social institutions or nodes of any branch.</summary>
+        public string[] Requires = Array.Empty<string>();
+        public Bonus Effect = new();
+        public void Sync(Wire w) { w.S(ref Id); w.S(ref Name); w.S(ref Description); w.I(ref Cost); w.SA(ref Requires); Effect.Sync(w); }
+    }
+
+    /// <summary>
+    /// A development branch defined by data (a JSON file in the host's mods folder), e.g. Magic or Shamanism.
+    /// It advances in parallel with science and institutions, fed by a mix of the empire's yields.
+    /// </summary>
+    public sealed class BranchDef : IWire
+    {
+        public string Id = "", Name = "", Description = "";
+        /// <summary>Points per turn = FromScience x science + FromCulture x culture + FromFaith x faith.</summary>
+        public float FromScience, FromCulture, FromFaith;
+        public bool Enabled = true;
+        public NodeDef[] Nodes = Array.Empty<NodeDef>();
+        public void Sync(Wire w)
+        {
+            w.S(ref Id); w.S(ref Name); w.S(ref Description); w.F(ref FromScience); w.F(ref FromCulture); w.F(ref FromFaith); w.A(ref Nodes);
+        }
+        public string Fuel()
+        {
+            var p = new List<string>();
+            if (FromScience > 0) p.Add($"{FromScience * 100:0}% науки");
+            if (FromCulture > 0) p.Add($"{FromCulture * 100:0}% культуры");
+            if (FromFaith > 0) p.Add($"{FromFaith * 100:0}% веры");
+            return p.Count == 0 ? "ничего" : string.Join(" + ", p);
+        }
+    }
+
+    private static NodeDef N(string id, string name, int cost, Bonus effect, params string[] requires)
+        => new() { Id = id, Name = name, Cost = cost, Effect = effect, Requires = requires };
+
+    /// <summary>The two branches that ship with the game; they double as examples for writing your own.</summary>
+    public static List<BranchDef> DefaultBranches() => new()
+    {
+        new BranchDef
+        {
+            Id = "shamanism", Name = "Шаманство", FromFaith = 1f, FromCulture = 0.5f,
+            Description = "Духи, травы и видения. Растёт от веры и культуры; переплетается с ранними технологиями и институтами.",
+            Nodes = new[]
+            {
+                N("sh_spirits", "Духи предков", 30, new Bonus { Happy = 1 }),
+                N("sh_herbs", "Травничество", 50, new Bonus { Food = 1 }, "sh_spirits", "agriculture"),
+                N("sh_totems", "Тотемы", 60, new Bonus { CulPct = 10 }, "sh_spirits", "c_tribal"),
+                N("sh_trance", "Транс и видения", 110, new Bonus { FaithPct = 25 }, "sh_herbs", "sh_totems"),
+                N("sh_beast", "Звериный облик", 160, new Bonus { StrPct = 10 }, "sh_trance", "hunting"),
+                N("sh_weather", "Заклинание погоды", 260, new Bonus { Food = 1, ProdPct = 5 }, "sh_trance", "c_rites"),
+                N("sh_council", "Совет предков", 420, new Bonus { Calm = 2, Favor = 1 }, "sh_weather", "sh_beast"),
+            },
+        },
+        new BranchDef
+        {
+            Id = "magic", Name = "Магия", FromScience = 0.4f, FromFaith = 0.6f,
+            Description = "От рун к высшей магии. Растёт от науки и веры; требует письменности, а алхимия и прорицание — знаний шаманов.",
+            Nodes = new[]
+            {
+                N("mg_runes", "Руны", 40, new Bonus { SciPct = 5 }, "writing"),
+                N("mg_alchemy", "Алхимия", 80, new Bonus { GoldPct = 10 }, "mg_runes", "sh_herbs"),
+                N("mg_elements", "Стихийная магия", 120, new Bonus { ProdPct = 10 }, "mg_runes"),
+                N("mg_wards", "Обереги", 150, new Bonus { UpkeepCutPct = 10 }, "mg_runes", "masonry"),
+                N("mg_divination", "Прорицание", 220, new Bonus { SciPct = 10, Favor = 1 }, "mg_alchemy", "sh_trance"),
+                N("mg_enchant", "Зачарование оружия", 300, new Bonus { StrPct = 15 }, "mg_elements", "iron_working"),
+                N("mg_academy", "Академия магов", 520, new Bonus { SciPct = 15, CulPct = 10 }, "mg_divination", "mg_enchant", "education"),
+                N("mg_arcane", "Высшая магия", 900, new Bonus { SciPct = 10, GoldPct = 10, ProdPct = 10, Happy = 1 }, "mg_academy", "c_humanism"),
+            },
+        },
+    };
+
+    /// <summary>Branches in effect. The server sets them from its mods folder; clients receive them when a game starts.</summary>
+    public static IReadOnlyList<BranchDef> Branches { get; private set; } = DefaultBranches();
+    private static Dictionary<string, NodeDef> _nodes = DefaultBranches().SelectMany(b => b.Nodes).ToDictionary(n => n.Id);
+
+    public static void SetBranches(IEnumerable<BranchDef> branches)
+    {
+        var list = branches.Where(b => b.Enabled).ToList();
+        _nodes = list.SelectMany(b => b.Nodes).ToDictionary(n => n.Id);
+        Branches = list;
+    }
+
+    public static NodeDef? Node(string? id) => id != null && _nodes.TryGetValue(id, out var n) ? n : null;
+    public static BranchDef? BranchOf(string nodeId) => Branches.FirstOrDefault(b => b.Nodes.Any(n => n.Id == nodeId));
+
+    /// <summary>Human-readable name of anything a node may require, with the tree it comes from.</summary>
+    public static string RequirementName(string id)
+    {
+        if (Node(id) is { } n) return $"{n.Name} ({BranchOf(id)?.Name})";
+        if (Civic(id) is { } c) return $"{c.Name} (институт)";
+        if (Tech(id) is { } t) return $"{t.Name} (наука)";
+        return id;
+    }
+
+    /// <summary>Whether a requirement of any kind is met.</summary>
+    public static bool Satisfied(string id, ICollection<string> techs, int[] future, ICollection<string> civics, int civicLevel, ICollection<string> nodes)
+    {
+        if (_nodes.ContainsKey(id)) return nodes.Contains(id);
+        if (Civic(id) != null) return HasCivic(civics, civicLevel, id);
+        return HasTech(techs, future, id);
+    }
+
+    public static Bonus NodeBonus(IEnumerable<string> known)
+    {
+        var b = new Bonus();
+        foreach (string id in known) if (_nodes.TryGetValue(id, out var n)) b.Add(n.Effect);
         return b;
     }
 
