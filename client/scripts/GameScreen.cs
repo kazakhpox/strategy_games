@@ -35,6 +35,8 @@ public partial class GameScreen : Control
     private Win _win = Win.None;
     private int _cityId = -1, _lastTurn = -1, _confirmDisband = -1;
     private bool _scrollToFrontier;
+    /// <summary>A spell waiting for the player to pick its target on the map (caster 0 = cast by the empire).</summary>
+    private (Rules.ActionDef action, int caster)? _aiming;
     private bool _advancePending, _appendQueue, _firstDelta = true;
     private double _toastUntil, _timerShownAt;
     private int _timerBase = -1;
@@ -146,7 +148,7 @@ public partial class GameScreen : Control
     {
         Map.OnDelta(d);
         Minimap?.MarkDirty();
-        if (d.Events.Any(e => e.Type == EventKind.Combat)) Sound.Play(Sfx.Id.Combat);
+        if (d.Events.Any(e => e.Type is EventKind.Combat or EventKind.Ranged)) Sound.Play(Sfx.Id.Combat);
         foreach (var e in d.Events)
         {
             string? text = W.Describe(e);
@@ -234,7 +236,11 @@ public partial class GameScreen : Control
         switch (k.Keycode)
         {
             case Key.Enter or Key.KpEnter: EndTurn(); break;
-            case Key.Escape: if (_win != Win.None) Toggle(Win.None); else { Map.Select(-1); Refresh(); } break;
+            case Key.Escape:
+                if (_aiming != null) StopAiming("Отменено");
+                else if (_win != Win.None) Toggle(Win.None);
+                else { Map.Select(-1); Refresh(); }
+                break;
             case Key.Space: SkipUnit(); break;
             case Key.N: SelectNext(true); break;
             case Key.B: UnitCommand(CmdType.FoundCity); break;
@@ -287,9 +293,44 @@ public partial class GameScreen : Control
         _advancePending = true;
     }
 
+    /// <summary>Starts or immediately performs an action; targeted ones wait for a click on the map.</summary>
+    public void BeginAction(Rules.ActionDef a, int casterId)
+    {
+        if (a.Target == "None") { Net.SendCommand(CmdType.Cast, casterId, -1, 0, a.Id); _advancePending = casterId != 0; return; }
+        _aiming = (a, casterId);
+        if (_win != Win.None) Toggle(Win.None);
+        // show where the spell may land
+        if (a.Target == "City") Map.Highlight = W.Cities.Values.Where(c => c.Owner == W.MyId).Select(c => c.Tile).ToArray();
+        else
+        {
+            int range = Math.Max(1, a.Range);
+            var origins = casterId != 0 && W.Units.TryGetValue(casterId, out var cu) ? new List<int> { cu.Tile }
+                : W.Cities.Values.Where(c => c.Owner == W.MyId).Select(c => c.Tile).ToList();
+            Map.Highlight = origins.SelectMany(o => W.Grid.Range(o, range)).Distinct().Where(t => W.Vis[t] > 0).ToArray();
+        }
+        Map.Invalidate();
+        Toast($"{a.Name}: выберите {(a.Target == "City" ? "свой город" : "клетку")} левой кнопкой (Esc — отмена)", false);
+    }
+
+    private void StopAiming(string? message = null)
+    {
+        _aiming = null;
+        Map.Highlight = Array.Empty<int>();
+        Map.Invalidate();
+        if (message != null) Toast(message, false);
+    }
+
     public void TileClicked(int tile)
     {
         if (tile < 0) return;
+        if (_aiming is { } aim)
+        {
+            Net.SendCommand(CmdType.Cast, aim.caster, tile, 0, aim.action.Id);
+            Sound.Play(Sfx.Id.Click);
+            StopAiming();
+            _advancePending = aim.caster != 0;
+            return;
+        }
         _confirmDisband = -1;
         var own = W.UnitsAt(tile).Where(u => u.Owner == W.MyId).OrderBy(u => u.Id).ToList();
         var city = W.CityAt(tile);
@@ -318,7 +359,17 @@ public partial class GameScreen : Control
             return;
         }
         if (tile < 0 || Selected is not { } u || u.Owner != W.MyId) return;
+        if (_aiming != null) { StopAiming("Отменено"); return; }
         if (!W.MyTurn) { Toast("Сейчас не ваш ход", true); return; }
+        if (u.Def.X.Ranged > 0 && u.Moves > 0 && W.Grid.Distance(u.Tile, tile) <= u.Def.X.Ranged
+            && W.UnitsAt(tile).Any(o => o.Owner != W.MyId && W.Players.TryGetValue(o.Owner, out var foe) && foe.AtWar))
+        {
+            // enemies within reach: this is a shot, not a march, so there is no path to predict
+            Net.SendCommand(CmdType.MoveUnit, u.Id, tile);
+            Sound.Play(Sfx.Id.Combat);
+            _advancePending = true;
+            return;
+        }
         if (u.Moves <= 0) { Toast("У этого юнита не осталось очков движения в этом ходу", true); Sound.Play(Sfx.Id.Error); return; }
         Map.OrderMove(u, tile);
         Sound.Play(Sfx.Id.Move);
@@ -416,9 +467,34 @@ public partial class GameScreen : Control
         var def = u.Def;
         string state = u.Work != 0 ? $"строит: {Rules.WorkName((WorkKind)u.Work)} ({u.WorkTurns} х.)" : u.Fortified ? "укреплён" : u.Goto >= 0 ? "в пути" : "";
         _unitBox.AddChild(Ui.Lbl($"{def.Name}  {(def.Str > 0 ? $"сила {def.Str}  " : "")}HP {u.Hp}  ходы {u.Moves / (float)Rules.MovePoint:0.#}/{def.Moves}  {state}", 15));
+        string abilities = def.X.Abilities();
+        if (abilities.Length > 0 || u.Expires > 0 || u.Shield > 0)
+        {
+            var extra = Ui.Lbl(string.Join("; ", new[] { abilities, u.Expires > 0 ? $"исчезнет через {u.Expires} х." : "", u.Shield > 0 ? $"щит +{u.Shield}% обороны" : "" }.Where(x => x.Length > 0)), 12, Ui.Science);
+            extra.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            extra.CustomMinimumSize = new Vector2(400, 0);
+            _unitBox.AddChild(extra);
+        }
         var row = new HFlowContainer();
         _unitBox.AddChild(row);
         if (u.Owner != W.MyId) return;
+        // spells and rites this unit performs
+        foreach (var a in Rules.Actions.Where(a => a.Caster == def.Id))
+        {
+            var act = a;
+            int uid = u.Id;
+            var branch = Rules.BranchOfAction(a.Id);
+            int bi = branch == null ? -1 : Rules.Branches.ToList().FindIndex(b => b.Id == branch.Id);
+            int have = bi >= 0 && bi < W.Me.Power.Length ? W.Me.Power[bi] : 0;
+            int ai = Rules.Actions.ToList().FindIndex(x => x.Id == a.Id);
+            int wait = ai >= 0 && ai < W.Me.Cooldowns.Length ? W.Me.Cooldowns[ai] : 0;
+            bool known = W.Knows(a.Requires);
+            string why = !known ? $"Нужно: {Rules.RequirementName(a.Requires)}" : wait > 0 ? $"Перезарядка: {wait} х."
+                : have < a.CostPower ? $"Не хватает: {branch?.PowerName} {have}/{a.CostPower}" : u.Moves <= 0 ? "У юнита нет очков движения" : "";
+            var cast = Ui.Btn($"✦ {a.Name} ({a.Price(branch?.PowerName ?? "силы")})", () => BeginAction(act, uid), a.Effect() + (why.Length > 0 ? "\n" + why : ""));
+            cast.Disabled = why.Length > 0 || !W.MyTurn;
+            row.AddChild(cast);
+        }
         if (def.Role == UnitRole.Settler) row.AddChild(Ui.Btn("Основать город (B)", () => UnitCommand(CmdType.FoundCity)));
         if (def.Role == UnitRole.Missionary)
         {
@@ -497,7 +573,7 @@ public partial class GameScreen : Control
     private void RebuildWindow()
     {
         _window.Visible = _win != Win.None;
-        Map.Highlight = Array.Empty<int>();
+        if (_aiming == null) Map.Highlight = Array.Empty<int>(); // keep the spell's range markers while a target is being picked
         Map.Invalidate();
         if (_win == Win.None) return;
         int scroll = _windowScroll.ScrollVertical, scrollX = _windowScroll.ScrollHorizontal;
@@ -547,6 +623,7 @@ public partial class GameScreen : Control
         var creed = W.Me.Religions.FirstOrDefault(r => r.Id == c.Religion);
         string pressure = string.Join(", ", Enumerable.Range(0, d.Pressure.Length / 2)
             .Select(i => $"{W.Me.Religions.FirstOrDefault(r => r.Id == d.Pressure[i * 2])?.Name ?? "?"} {d.Pressure[i * 2 + 1]}"));
+        if (d.Buffs.Length > 0) Stat("Благословения", string.Join(", ", d.Buffs), Ui.Good);
         Stat("Религия", creed == null ? "нет" + (pressure.Length > 0 ? $" (давление: {pressure})" : "")
             : $"{creed.Name} — {Rules.Beliefs[creed.Belief].Name}: {Rules.Beliefs[creed.Belief].Effect.Describe()}" + (pressure.Length > 0 ? $" (давление: {pressure})" : ""));
         Stat("Постройки", d.Buildings.Length == 0 ? "нет" : string.Join(", ", d.Buildings.Select(b => Rules.Building(b)?.Name ?? b)));
@@ -599,7 +676,7 @@ public partial class GameScreen : Control
             col.AddChild(b);
         }
         bool coastal = CoastalCity(c);
-        var land = Rules.Units.Where(x => !x.Sea && x.Role != UnitRole.Missionary && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(8).Reverse();
+        var land = Rules.Units.Where(x => !x.Sea && x.Role != UnitRole.Missionary && !x.X.SummonOnly && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(8).Reverse();
         var navy = Rules.Units.Where(x => x.Sea && coastal && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(4).Reverse();
         foreach (var ud in land.Concat(navy))
             Option(units, "u:" + ud.Id, ud.Sea ? "⚓ " + ud.Name : ud.Name, ud.Cost, ud.Role switch
@@ -607,7 +684,8 @@ public partial class GameScreen : Control
                 UnitRole.Settler => "Основывает новый город (город теряет 1 жителя)",
                 UnitRole.Worker => ud.Sea ? "Строит рыбацкие суда и нефтяные платформы на морских ресурсах" : "Строит улучшения на суше и дороги",
                 _ => $"Сила {ud.Str}, ходы {ud.Moves}" + (ud.CityDefPct > 0 ? $", +{ud.CityDefPct}% при обороне города" : "")
-                     + (ud.Needs != Resource.None ? $", требует ресурс: {Rules.Res(ud.Needs).Name}" : ""),
+                     + (ud.Needs != Resource.None ? $", требует ресурс: {Rules.Res(ud.Needs).Name}" : "")
+                     + (ud.X.Abilities().Length > 0 ? "\n" + ud.X.Abilities() : ""),
             });
         var missing = Rules.Units.Where(x => x.Role != UnitRole.Missionary && W.Knows(x.Tech) && !HasRes(x.Needs) && (!x.Sea || coastal)).ToList();
         if (missing.Count > 0)
@@ -740,6 +818,8 @@ public partial class GameScreen : Control
         var cur = Rules.Node(_branchTab < me.BranchCurrent.Length ? me.BranchCurrent[_branchTab] : "");
         if (br.Description.Length > 0) Add(Ui.Lbl(br.Description, 13, Ui.Dim));
         Add(Ui.Lbl($"Растёт от: {br.Fuel()} — сейчас +{rate} очк. за ход. Ветки идут параллельно с наукой и институтами и ничего у них не отнимают.", 13));
+        int pool = _branchTab < me.Power.Length ? me.Power[_branchTab] : 0, poolRate = _branchTab < me.PowerRate.Length ? me.PowerRate[_branchTab] : 0;
+        Add(Ui.Lbl($"{br.PowerName}: {pool} (+{poolRate} за ход, не больше {Rules.PowerCap}) — ресурс ветки для её действий; его дают узлы и здания ветки.", 14, Ui.Science));
         Add(Ui.Lbl(cur != null ? $"Сейчас осваивается: {cur.Name} ({progress}/{cur.Cost})" : $"Ничего не осваивается — очки копятся ({progress}).", 15, cur != null ? Ui.Gold : Ui.Bad));
         var total = Rules.NodeBonus(br.Nodes.Where(n => me.Nodes.Contains(n.Id)).Select(n => n.Id)).Describe();
         if (total.Length > 0) Add(Ui.Lbl("Уже даёт: " + total, 13, Ui.Good));
@@ -749,18 +829,21 @@ public partial class GameScreen : Control
         if (br.Actions.Length > 0)
         {
             Heading("Действия");
-            Add(Ui.Lbl($"Обряды и заклинания действуют сразу на всю империю. У вас {me.Faith} веры и {me.Gold} золота.", 12, Ui.Dim));
+            Add(Ui.Lbl("Действия империи запускаются отсюда. Заклинания юнитов (✦) творит сам юнит: выберите его на карте — кнопки появятся в его панели.", 12, Ui.Dim));
             foreach (var a in br.Actions)
             {
-                string id = a.Id;
+                var act = a;
                 int idx = Rules.Actions.ToList().FindIndex(x => x.Id == a.Id);
                 int wait = idx >= 0 && idx < me.Cooldowns.Length ? me.Cooldowns[idx] : 0;
                 bool open = W.Knows(a.Requires);
-                var cast = Ui.Btn($"{a.Name} — {a.Price()}", () => Net.SendCommand(CmdType.Cast, s: id), a.Description, 14);
-                cast.CustomMinimumSize = new Vector2(300, 0);
+                bool byUnit = a.Caster.Length > 0;
+                string casterName = byUnit ? Rules.Units.FirstOrDefault(x => x.Id == a.Caster)?.Name ?? a.Caster : "";
+                var cast = Ui.Btn($"{(byUnit ? "✦ " : "")}{a.Name} — {a.Price(br.PowerName)}", () => BeginAction(act, 0), a.Description, 14);
+                cast.CustomMinimumSize = new Vector2(320, 0);
                 cast.Alignment = HorizontalAlignment.Left;
-                cast.Disabled = !open || wait > 0 || me.Faith < a.CostFaith || me.Gold < a.CostGold;
-                string state = !open ? $"нужно: {Rules.RequirementName(a.Requires)}" : wait > 0 ? $"перезарядка: {wait} х." : $"повтор через {a.Cooldown} х.";
+                cast.Disabled = byUnit || !open || wait > 0 || pool < a.CostPower || me.Faith < a.CostFaith || me.Gold < a.CostGold;
+                string state = !open ? $"нужно: {Rules.RequirementName(a.Requires)}" : byUnit ? $"творит юнит «{casterName}»"
+                    : wait > 0 ? $"перезарядка: {wait} х." : a.Target == "City" ? "после нажатия выберите свой город" : $"повтор через {a.Cooldown} х.";
                 Add(Ui.H(12, cast, Ui.V(0, Ui.Lbl(a.Effect(), 13), Ui.Lbl(state, 12, !open ? Ui.Dim : wait > 0 ? Ui.Gold : Ui.Good))));
             }
         }
@@ -769,7 +852,8 @@ public partial class GameScreen : Control
             Heading("Юниты и здания ветки (строятся в городах)");
             foreach (var u in br.Units)
                 Add(Ui.Lbl($"{(W.Knows(u.Requires) ? "✔" : "✘")} Юнит «{u.Name}» — сила {u.Str}, ходы {u.Moves}" + (u.CityDefPct > 0 ? $", +{u.CityDefPct}% в обороне города" : "")
-                           + $", цена {u.Cost}. Открывает: {Rules.RequirementName(u.Requires)}", 13, W.Knows(u.Requires) ? Colors.White : Ui.Dim));
+                           + $", цена {u.Cost}. Открывает: {Rules.RequirementName(u.Requires)}"
+                           + (u.Abilities().Length > 0 ? $"\n      {u.Abilities()}" : ""), 13, W.Knows(u.Requires) ? Colors.White : Ui.Dim));
             foreach (var m in br.Buildings)
                 Add(Ui.Lbl($"{(W.Knows(m.Requires) ? "✔" : "✘")} Здание «{m.Name}» — {Rules.Building(m.Id)?.Describe()}, цена {m.Cost}. Открывает: {Rules.RequirementName(m.Requires)}", 13,
                     W.Knows(m.Requires) ? Colors.White : Ui.Dim));

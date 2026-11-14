@@ -1,10 +1,12 @@
 {
   "Id": "magic",
   "Name": "Магия",
-  "Description": "От рун к высшей магии. Растёт от науки и веры; требует письменности, а алхимия и прорицание — знаний шаманов.",
+  "Description": "Дальний урон, конструкты и экономика. Боевые маги бьют издалека, башни обстреливают осаждающих, големы не требуют содержания.",
   "FromScience": 0.4,
   "FromCulture": 0,
   "FromFaith": 0.6,
+  "PowerName": "Мана",
+  "Version": 2,
   "Enabled": true,
   "Nodes": [
     {
@@ -28,7 +30,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 1
     },
     {
       "Id": "mg_alchemy",
@@ -52,7 +55,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 0
     },
     {
       "Id": "mg_elements",
@@ -65,7 +69,7 @@
       "Effect": {
         "SciPct": 0,
         "GoldPct": 0,
-        "ProdPct": 10,
+        "ProdPct": 5,
         "CulPct": 0,
         "FaithPct": 0,
         "StrPct": 0,
@@ -75,7 +79,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 1
     },
     {
       "Id": "mg_wards",
@@ -99,7 +104,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 0
     },
     {
       "Id": "mg_divination",
@@ -123,7 +129,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 1
-      }
+      },
+      "Power": 1
     },
     {
       "Id": "mg_enchant",
@@ -147,7 +154,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 0
     },
     {
       "Id": "mg_academy",
@@ -172,7 +180,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 2
     },
     {
       "Id": "mg_arcane",
@@ -196,31 +205,76 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 3
     }
   ],
   "Units": [
+    {
+      "Id": "familiar",
+      "Name": "Фамильяр",
+      "Requires": "mg_runes",
+      "Cost": 30,
+      "Str": 1,
+      "Moves": 2,
+      "CityDefPct": 0,
+      "Sight": 2,
+      "Sea": false,
+      "Ranged": 0,
+      "RangedStr": 0,
+      "HealAura": 0,
+      "Regen": 0,
+      "FearPct": 0,
+      "ForestPct": 0,
+      "Lifesteal": 0,
+      "Stealth": true,
+      "Flying": true,
+      "Construct": false,
+      "SummonOnly": false
+    },
     {
       "Id": "battle_mage",
       "Name": "Боевой маг",
       "Requires": "mg_elements",
       "Cost": 60,
-      "Str": 7,
+      "Str": 3,
       "Moves": 1,
       "CityDefPct": 0,
       "Sight": 1,
-      "Sea": false
+      "Sea": false,
+      "Ranged": 2,
+      "RangedStr": 7,
+      "HealAura": 0,
+      "Regen": 0,
+      "FearPct": 0,
+      "ForestPct": 0,
+      "Lifesteal": 0,
+      "Stealth": false,
+      "Flying": false,
+      "Construct": false,
+      "SummonOnly": false
     },
     {
       "Id": "golem",
       "Name": "Голем",
       "Requires": "mg_wards",
       "Cost": 55,
-      "Str": 5,
+      "Str": 6,
       "Moves": 1,
-      "CityDefPct": 75,
+      "CityDefPct": 50,
       "Sight": 1,
-      "Sea": false
+      "Sea": false,
+      "Ranged": 0,
+      "RangedStr": 0,
+      "HealAura": 0,
+      "Regen": 0,
+      "FearPct": 0,
+      "ForestPct": 0,
+      "Lifesteal": 0,
+      "Stealth": false,
+      "Flying": false,
+      "Construct": true,
+      "SummonOnly": false
     }
   ],
   "Buildings": [
@@ -232,7 +286,7 @@
       "Food": 0,
       "Commerce": 0,
       "ProdPct": 0,
-      "SciPct": 15,
+      "SciPct": 10,
       "GoldPct": 0,
       "Culture": 0,
       "CulPct": 0,
@@ -240,7 +294,13 @@
       "DefPct": 0,
       "Upkeep": 1,
       "Calm": 0,
-      "Faith": 0
+      "Faith": 0,
+      "Power": 2,
+      "UnitHeal": 0,
+      "Bombard": 15,
+      "BombardRange": 2,
+      "AuraDefPct": 0,
+      "AuraRange": 2
     },
     {
       "Id": "alchemy_lab",
@@ -258,7 +318,13 @@
       "DefPct": 0,
       "Upkeep": 1,
       "Calm": 0,
-      "Faith": 0
+      "Faith": 0,
+      "Power": 1,
+      "UnitHeal": 0,
+      "Bombard": 0,
+      "BombardRange": 2,
+      "AuraDefPct": 0,
+      "AuraRange": 2
     }
   ],
   "Actions": [
@@ -269,20 +335,74 @@
       "Requires": "mg_alchemy",
       "Kind": "Gold",
       "Amount": 60,
-      "CostFaith": 30,
+      "CostFaith": 0,
       "CostGold": 0,
-      "Cooldown": 8
+      "Cooldown": 8,
+      "CostPower": 5,
+      "Caster": "",
+      "Target": "None",
+      "Range": 1,
+      "Radius": 0,
+      "Duration": 0,
+      "Unit": "",
+      "Stat": ""
     },
     {
-      "Id": "mg_firestorm",
-      "Name": "Огненный шторм",
+      "Id": "mg_fireball",
+      "Name": "Огненный шар",
       "Description": "",
       "Requires": "mg_elements",
-      "Kind": "Smite",
-      "Amount": 30,
-      "CostFaith": 45,
+      "Kind": "Damage",
+      "Amount": 35,
+      "CostFaith": 0,
       "CostGold": 0,
-      "Cooldown": 10
+      "Cooldown": 2,
+      "CostPower": 5,
+      "Caster": "battle_mage",
+      "Target": "Tile",
+      "Range": 3,
+      "Radius": 1,
+      "Duration": 0,
+      "Unit": "",
+      "Stat": ""
+    },
+    {
+      "Id": "mg_shield",
+      "Name": "Магический щит",
+      "Description": "",
+      "Requires": "mg_wards",
+      "Kind": "Shield",
+      "Amount": 50,
+      "CostFaith": 0,
+      "CostGold": 0,
+      "Cooldown": 2,
+      "CostPower": 3,
+      "Caster": "battle_mage",
+      "Target": "Tile",
+      "Range": 2,
+      "Radius": 0,
+      "Duration": 3,
+      "Unit": "",
+      "Stat": ""
+    },
+    {
+      "Id": "mg_teleport",
+      "Name": "Телепорт",
+      "Description": "",
+      "Requires": "mg_divination",
+      "Kind": "Teleport",
+      "Amount": 1,
+      "CostFaith": 0,
+      "CostGold": 0,
+      "Cooldown": 6,
+      "CostPower": 8,
+      "Caster": "battle_mage",
+      "Target": "City",
+      "Range": 1,
+      "Radius": 0,
+      "Duration": 0,
+      "Unit": "",
+      "Stat": ""
     },
     {
       "Id": "mg_insight",
@@ -291,9 +411,17 @@
       "Requires": "mg_divination",
       "Kind": "Reveal",
       "Amount": 8,
-      "CostFaith": 40,
+      "CostFaith": 0,
       "CostGold": 0,
-      "Cooldown": 12
+      "Cooldown": 12,
+      "CostPower": 6,
+      "Caster": "",
+      "Target": "None",
+      "Range": 1,
+      "Radius": 0,
+      "Duration": 0,
+      "Unit": "",
+      "Stat": ""
     }
   ]
 }

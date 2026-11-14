@@ -47,6 +47,35 @@ public partial class DemoTour : Node
         GD.Print(ok ? "tour: click-select OK" : $"tour: click-select FAILED (selected {game.Map.SelectedUnit})");
     }
 
+    /// <summary>Casts "grow forest" the way a player does: pick the spell, then click a tile on the map.</summary>
+    private async Task SpellTest(GameScreen game, ClientWorld w)
+    {
+        var shaman = w.Units.Values.FirstOrDefault(u => u.Owner == w.MyId && u.Def.Id == "shaman");
+        var spell = Rules.Action("sh_grow");
+        if (shaman == null || spell == null || !w.Knows(spell.Requires)) { GD.Print($"tour: spell-cast SKIPPED (shaman {(shaman != null)}, totems {w.Knows("sh_totems")})"); return; }
+        int target = w.Grid.Range(shaman.Tile, spell.Range).FirstOrDefault(t =>
+        {
+            var tile = w.Tiles[t];
+            return t != shaman.Tile && w.Vis[t] > 0 && tile.Passable && !tile.Forest && tile.CityId < 0 && tile.Improvement == Improvement.None
+                   && tile.Owner == w.MyId && tile.Terrain is Terrain.Grassland or Terrain.Plains or Terrain.Tundra;
+        }, -1);
+        if (target < 0) { GD.Print("tour: spell-cast SKIPPED (no suitable tile)"); return; }
+        game.Map.Select(shaman.Id);
+        game.Map.CenterOn(shaman.Tile);
+        await Wait(0.3);
+        game.BeginAction(spell, shaman.Id);
+        await Shot("03a_aiming");
+        var pos = game.Map.ScreenPos(target);
+        foreach (bool pressed in new[] { true, false })
+        {
+            Input.ParseInputEvent(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = pressed, Position = pos, GlobalPosition = pos });
+            await Wait(0.1);
+        }
+        await Wait(0.6);
+        GD.Print(w.Tiles[target].Forest ? "tour: spell-cast OK" : "tour: spell-cast FAILED");
+        await Shot("03b_after_spell");
+    }
+
     private async Task Run()
     {
         DirAccess.MakeDirRecursiveAbsolute(_dir);
@@ -63,7 +92,7 @@ public partial class DemoTour : Node
         string[] plan = { "u:warrior", "u:worker", "u:settler", "b:monument", "u:warrior", "b:granary", "b:library" };
         int planIdx = 0;
         var rnd = new System.Random(5);
-        for (int turn = 0; turn < 45; turn++)
+        for (int turn = 0; turn < 75; turn++)
         {
             await Wait(0.12);
             for (int bi = 0; bi < Rules.Branches.Count && bi < w.Me.BranchCurrent.Length; bi++)
@@ -78,11 +107,16 @@ public partial class DemoTour : Node
                 net.SendCommand(CmdType.FoundReligion, Enumerable.Range(0, 8).First(i => w.Me.Religions.All(r => r.Name != Rules.ReligionNames[i])), Enumerable.Range(0, 6).First(i => w.Me.Religions.All(r => r.Belief != i)));
             if (w.Me.Research.Length == 0 && w.Me.Available.Length > 0)
                 net.SendCommand(CmdType.SetResearch, s: w.Me.Available.OrderBy(a => a.Cost).First().Id);
+            bool wantShaman = w.Knows("sh_spirits") && !w.Units.Values.Any(u => u.Owner == w.MyId && u.Def.Id == "shaman");
             foreach (var c in w.Cities.Values.Where(c => c.Owner == w.MyId && c.Detail is { Queue.Length: 0 }))
-                net.SendCommand(CmdType.SetProduction, c.Id, 0, 0, plan[planIdx++ % plan.Length]);
+            {
+                net.SendCommand(CmdType.SetProduction, c.Id, 0, 0, wantShaman ? "u:shaman" : plan[planIdx++ % plan.Length]);
+                wantShaman = false;
+            }
             foreach (var u in w.Units.Values.Where(u => u.Owner == w.MyId && u.Moves > 0 && u.Goto < 0 && u.Work == 0).ToList())
             {
                 if (u.Def.Role == UnitRole.Settler) { net.SendCommand(CmdType.FoundCity, u.Id); continue; }
+                if (u.Def.Id == "shaman") continue; // stays home for the spell test
                 if (u.Def.Role == UnitRole.Worker)
                 {
                     var kind = new[] { WorkKind.Mine, WorkKind.Farm, WorkKind.Cottage, WorkKind.Road }
@@ -99,6 +133,7 @@ public partial class DemoTour : Node
         }
         await Wait(0.6);
         var game = _main.Game!;
+        await SpellTest(game, w);
         var capital = w.Cities.Values.FirstOrDefault(c => c.Owner == w.MyId);
         if (capital != null) game.Map.CenterOn(capital.Tile);
         await Shot("03_map");

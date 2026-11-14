@@ -253,6 +253,8 @@ public partial class MapView : Node3D
         foreach (var e in d.Events)
             if (e.Type == EventKind.Combat && W.Grid.Valid(e.B))
                 _flashes.Add((e.B, Now + 0.8, e.S == "1" ? new Color(1, 0.45f, 0.15f) : new Color(0.8f, 0.85f, 1f)));
+            else if (e.Type == EventKind.Ranged && W.Grid.Valid(e.B))
+                _flashes.Add((e.B, Now + 0.9, new Color(1f, 0.75f, 0.2f))); // shots, spells and tower fire
         HoverPath = null;
         _dirty = true;
     }
@@ -697,6 +699,10 @@ public partial class MapView : Node3D
                     v.Head.MaterialOverride = civilian ? _wallMat : OwnerMat(u.Owner);
                     float s = 0.85f + Math.Min(0.5f, u.Def.Str / 60f);
                     v.Body.Scale = civilian ? Vector3.One : new Vector3(s, 1, s);
+                    // abilities show in the figure: flyers hover, constructs are stone blocks, casters carry a pale head
+                    if (u.Def.X.Flying) { v.Body.Position += new Vector3(0, 0.45f, 0); v.Head.Position += new Vector3(0, 0.45f, 0); }
+                    if (u.Def.X.Construct) { v.Body.Mesh = _civilMesh; v.Body.Scale = new Vector3(1.15f, 1.5f, 1.15f); v.Body.Position = new Vector3(0, 0.3f, 0); v.Head.MaterialOverride = _wallMat; }
+                    if (u.Def.X.Ranged > 0 || u.Def.X.HealAura > 0) v.Head.MaterialOverride = _wallMat;
                 }
             }
             bool mine = u.Owner == W.MyId, selected = u.Id == SelectedUnit;
@@ -707,6 +713,9 @@ public partial class MapView : Node3D
             if (u.Hp < 100) text += $"  {u.Hp}%";
             if (u.Fortified) text += " ▣";
             if (u.Work != 0) text += " ⚒";
+            if (u.Expires > 0) text += $" ⏳{u.Expires}";
+            if (u.Shield > 0) text += " ⛨";
+            if (mine && u.Def.X.Stealth) text += " ◌";
             if (!u.Def.Sea && W.Tiles[u.Tile].IsWater) text += " ⛵";
             v.Label.Text = text;
             bool ready = mine && u.Moves > 0 && !u.Fortified && u.Work == 0 && u.Goto < 0;

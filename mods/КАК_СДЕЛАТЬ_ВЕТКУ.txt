@@ -1,54 +1,67 @@
 СВОИ ВЕТКИ РАЗВИТИЯ
 ===================
-Каждый файл *.json в этой папке — одна ветка. Скопируйте magic.json, переименуйте и измените.
+Каждый файл *.json прямо в этой папке — одна ветка. Образцы лежат в подпапке examples
+(она не загружается и обновляется при каждом запуске сервера): скопируйте оттуда magic.json
+сюда, переименуйте, поменяйте Id — и правьте.
 Изменения вступают в силу при следующем запуске сервера (кнопка «Создать сервер» в игре).
 Файлы нужны только хосту: остальным игрокам ветки передаются по сети.
 
-Поля ветки:
-  Id            короткое имя латиницей, уникальное (например "necromancy")
-  Name          название в игре
-  Description   пояснение
-  FromScience   какая доля науки за ход идёт в ветку (0.4 = 40%)
-  FromCulture   то же для культуры
-  FromFaith     то же для веры
-  Enabled       false — отключить ветку (так можно убрать и встроенную)
-  Nodes         список узлов
+ВЕТКА
+  Id, Name, Description
+  FromScience / FromCulture / FromFaith   какая доля науки, культуры, веры за ход идёт в ветку (0.4 = 40%)
+  PowerName     название собственного ресурса ветки ("Мана", "Духи" ...) — на него творятся действия
+  Version       для своих веток не нужен; чтобы ЗАМЕНИТЬ встроенную ветку, оставьте Version как в образце
+  Enabled       false — отключить ветку
+  Nodes, Units, Buildings, Actions
 
-Поля узла:
-  Id        уникальное имя латиницей (например "nc_bones")
-  Name      название
-  Cost      цена в очках ветки
-  Requires  что нужно освоить раньше. Сюда можно писать id:
-              - узлов этой или любой другой ветки ("sh_trance")
-              - технологий ("writing", "iron_working", "education" ...)
-              - социальных институтов ("c_tribal", "c_rites", "c_humanism" ...)
-  Effect    бонус всей империи; любые из полей:
-              SciPct GoldPct ProdPct CulPct FaithPct   проценты к науке, золоту, производству, культуре, вере
-              StrPct          проценты к силе юнитов
-              UpkeepCutPct    на сколько процентов дешевле содержание
-              Happy           довольство в каждом городе
-              Calm            на сколько меньше брожения за ход
-              Food  Culture   пища и культура в каждом городе
-              Favor           дипломатическое одобрение за ход
+УЗЕЛ (Nodes)
+  Id, Name, Cost
+  Requires  список id того, что нужно освоить раньше: узлы этой или другой ветки ("sh_trance"),
+            технологии ("writing"), социальные институты ("c_rites")
+  Power     сколько ресурса ветки узел даёт каждый ход
+  Effect    бонус всей империи: SciPct GoldPct ProdPct CulPct FaithPct StrPct UpkeepCutPct
+            Happy Calm Food Culture Favor
 
-Кроме узлов ветка может открывать юнитов, здания и действия (списки Units, Buildings, Actions).
-У каждого в поле Requires — id узла (или технологии, института), который его открывает.
+ЮНИТ (Units)  — Requires здесь и ниже: один id, который открывает
+  Id, Name, Requires, Cost, Str (сила), Moves, CityDefPct, Sight, Sea
+  Способности:
+    Ranged + RangedStr   дальний бой: дальность и сила выстрела, без ответного урона
+    HealAura     лечит союзников на своей и соседних клетках за ход
+    Regen        лечит себя каждый ход
+    FearPct      враги рядом слабее на столько процентов
+    ForestPct    бонус силы в лесу
+    Lifesteal    HP после победы в ближнем бою
+    Stealth      true — виден врагу только вплотную
+    Flying       true — летает через горы и воду
+    Construct    true — без содержания, не лечится отдыхом, не боится
+    SummonOnly   true — не строится, только призывается действием
 
-Units:      Id, Name, Requires, Cost, Str (сила), Moves (ходы), CityDefPct (бонус обороны города, %),
-            Sight (обзор), Sea (true — корабль)
-Buildings:  Id, Name, Requires, Cost и любые из: Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct,
-            Happy, DefPct, Calm, Faith, Upkeep (содержание золотом)
-Actions:    Id, Name, Requires, Kind, Amount, CostFaith, CostGold, Cooldown (ходов до повтора)
-            Kind — одно из:
-              Heal     лечит всех ваших юнитов на Amount
-              Harvest  +Amount пищи в каждом городе
-              Calm     снимает Amount брожения во всех городах, прекращает беспорядки
-              Gold     +Amount золота
-              Science  +Amount к текущему исследованию
-              Culture  +Amount к текущему институту
-              Reveal   открывает карту в радиусе Amount клеток от столицы
-              Smite    Amount урона вражеским юнитам на вашей территории
+ЗДАНИЕ (Buildings)
+  Id, Name, Requires, Cost; доходы: Food Commerce ProdPct SciPct GoldPct Culture CulPct Happy DefPct Calm Faith Upkeep
+  Механики:
+    Power                     ресурс ветки за ход
+    UnitHeal                  лечит ваших юнитов в городе и рядом
+    Bombard + BombardRange    каждый ход бьёт одного врага рядом с городом
+    AuraDefPct + AuraRange    бонус обороны вашим юнитам вокруг города
 
-Ветка с тем же Id, что у встроенной ("magic", "shamanism"), заменяет её.
+ДЕЙСТВИЕ (Actions)
+  Id, Name, Requires, Kind, Amount, Cooldown (ходов до повтора)
+  CostPower / CostFaith / CostGold   цена
+  Caster    id юнита-исполнителя; пусто — действие империи (из окна «Ветки»)
+  Target    None, Tile (клетка) или City (ваш город)
+  Range     дальность от исполнителя; Radius — соседние клетки получают половину урона
+  Duration  сколько ходов длится эффект или живёт призванный юнит
+  Kind:
+    Heal      лечит всех ваших юнитов           Harvest  +Amount пищи в каждом городе
+    Calm      снимает брожение                  Gold / Science / Culture  +Amount
+    Reveal    открывает карту у столицы         Smite    урон врагам на вашей земле
+    HealArea  лечит вокруг исполнителя (нужен Caster)
+    Damage    урон по клетке (Target Tile)
+    Summon    призывает юнита Unit (Target None, Tile или City)
+    Bless     +Amount% к Stat (Food, Prod, Sci, Gold, Culture) в городе (Target City, Duration)
+    Forest    выращивает лес (Target Tile)
+    Shield    +Amount% обороны юнитам на клетке (Target Tile, Duration)
+    Teleport  переносит исполнителя со спутниками в ваш город (Target City, нужен Caster)
+
 Если в файле ошибка, сервер пропустит его и напишет в консоли, что именно не так.
-Список всех id технологий и институтов: IH.Server --list-ids
+Список всех id технологий, институтов и встроенных узлов: IH.Server --list-ids

@@ -1,10 +1,12 @@
 {
   "Id": "shamanism",
   "Name": "Шаманство",
-  "Description": "Духи, травы и видения. Растёт от веры и культуры; переплетается с ранними технологиями и институтами.",
+  "Description": "Природа, духи и поддержка. Шаманы лечат войска, выращивают леса и призывают духов; оборотни сильны в лесу.",
   "FromScience": 0,
   "FromCulture": 0.5,
   "FromFaith": 1,
+  "PowerName": "Духи",
+  "Version": 2,
   "Enabled": true,
   "Nodes": [
     {
@@ -26,7 +28,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 1
     },
     {
       "Id": "sh_herbs",
@@ -50,7 +53,8 @@
         "Food": 1,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 0
     },
     {
       "Id": "sh_totems",
@@ -74,7 +78,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 0
     },
     {
       "Id": "sh_trance",
@@ -98,7 +103,8 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 1
     },
     {
       "Id": "sh_beast",
@@ -115,14 +121,15 @@
         "ProdPct": 0,
         "CulPct": 0,
         "FaithPct": 0,
-        "StrPct": 10,
+        "StrPct": 5,
         "UpkeepCutPct": 0,
         "Happy": 0,
         "Calm": 0,
         "Food": 0,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 0
     },
     {
       "Id": "sh_weather",
@@ -146,7 +153,8 @@
         "Food": 1,
         "Culture": 0,
         "Favor": 0
-      }
+      },
+      "Power": 1
     },
     {
       "Id": "sh_council",
@@ -170,31 +178,76 @@
         "Food": 0,
         "Culture": 0,
         "Favor": 1
-      }
+      },
+      "Power": 2
     }
   ],
   "Units": [
     {
-      "Id": "spirit_guard",
-      "Name": "Страж духов",
-      "Requires": "sh_totems",
-      "Cost": 30,
-      "Str": 3,
-      "Moves": 1,
-      "CityDefPct": 100,
+      "Id": "shaman",
+      "Name": "Шаман",
+      "Requires": "sh_spirits",
+      "Cost": 35,
+      "Str": 2,
+      "Moves": 2,
+      "CityDefPct": 0,
       "Sight": 1,
-      "Sea": false
+      "Sea": false,
+      "Ranged": 0,
+      "RangedStr": 0,
+      "HealAura": 10,
+      "Regen": 0,
+      "FearPct": 0,
+      "ForestPct": 0,
+      "Lifesteal": 0,
+      "Stealth": false,
+      "Flying": false,
+      "Construct": false,
+      "SummonOnly": false
+    },
+    {
+      "Id": "spirit",
+      "Name": "Дух-страж",
+      "Requires": "sh_trance",
+      "Cost": 40,
+      "Str": 4,
+      "Moves": 2,
+      "CityDefPct": 0,
+      "Sight": 1,
+      "Sea": false,
+      "Ranged": 0,
+      "RangedStr": 0,
+      "HealAura": 0,
+      "Regen": 0,
+      "FearPct": 20,
+      "ForestPct": 0,
+      "Lifesteal": 0,
+      "Stealth": false,
+      "Flying": true,
+      "Construct": false,
+      "SummonOnly": true
     },
     {
       "Id": "werebeast",
       "Name": "Оборотень",
       "Requires": "sh_beast",
       "Cost": 50,
-      "Str": 6,
+      "Str": 5,
       "Moves": 2,
       "CityDefPct": 0,
       "Sight": 1,
-      "Sea": false
+      "Sea": false,
+      "Ranged": 0,
+      "RangedStr": 0,
+      "HealAura": 0,
+      "Regen": 10,
+      "FearPct": 0,
+      "ForestPct": 50,
+      "Lifesteal": 15,
+      "Stealth": false,
+      "Flying": false,
+      "Construct": false,
+      "SummonOnly": false
     }
   ],
   "Buildings": [
@@ -214,7 +267,13 @@
       "DefPct": 0,
       "Upkeep": 0,
       "Calm": 0,
-      "Faith": 0
+      "Faith": 0,
+      "Power": 0,
+      "UnitHeal": 20,
+      "Bombard": 0,
+      "BombardRange": 2,
+      "AuraDefPct": 0,
+      "AuraRange": 2
     },
     {
       "Id": "totem_pole",
@@ -232,7 +291,37 @@
       "DefPct": 0,
       "Upkeep": 0,
       "Calm": 0,
-      "Faith": 1
+      "Faith": 1,
+      "Power": 1,
+      "UnitHeal": 0,
+      "Bombard": 0,
+      "BombardRange": 2,
+      "AuraDefPct": 25,
+      "AuraRange": 2
+    },
+    {
+      "Id": "stone_circle",
+      "Name": "Круг камней",
+      "Requires": "sh_trance",
+      "Cost": 90,
+      "Food": 0,
+      "Commerce": 0,
+      "ProdPct": 0,
+      "SciPct": 0,
+      "GoldPct": 0,
+      "Culture": 0,
+      "CulPct": 0,
+      "Happy": 0,
+      "DefPct": 0,
+      "Upkeep": 0,
+      "Calm": 1,
+      "Faith": 0,
+      "Power": 2,
+      "UnitHeal": 0,
+      "Bombard": 0,
+      "BombardRange": 2,
+      "AuraDefPct": 0,
+      "AuraRange": 2
     }
   ],
   "Actions": [
@@ -243,31 +332,93 @@
       "Requires": "sh_spirits",
       "Kind": "Calm",
       "Amount": 30,
-      "CostFaith": 25,
+      "CostFaith": 0,
       "CostGold": 0,
-      "Cooldown": 8
+      "Cooldown": 8,
+      "CostPower": 4,
+      "Caster": "",
+      "Target": "None",
+      "Range": 1,
+      "Radius": 0,
+      "Duration": 0,
+      "Unit": "",
+      "Stat": ""
     },
     {
       "Id": "sh_heal",
       "Name": "Исцеляющий обряд",
       "Description": "",
       "Requires": "sh_herbs",
-      "Kind": "Heal",
+      "Kind": "HealArea",
       "Amount": 40,
-      "CostFaith": 25,
+      "CostFaith": 0,
       "CostGold": 0,
-      "Cooldown": 6
+      "Cooldown": 3,
+      "CostPower": 3,
+      "Caster": "shaman",
+      "Target": "None",
+      "Range": 2,
+      "Radius": 0,
+      "Duration": 0,
+      "Unit": "",
+      "Stat": ""
+    },
+    {
+      "Id": "sh_grow",
+      "Name": "Рост леса",
+      "Description": "",
+      "Requires": "sh_totems",
+      "Kind": "Forest",
+      "Amount": 1,
+      "CostFaith": 0,
+      "CostGold": 0,
+      "Cooldown": 2,
+      "CostPower": 4,
+      "Caster": "shaman",
+      "Target": "Tile",
+      "Range": 2,
+      "Radius": 0,
+      "Duration": 0,
+      "Unit": "",
+      "Stat": ""
+    },
+    {
+      "Id": "sh_summon",
+      "Name": "Призыв духа",
+      "Description": "",
+      "Requires": "sh_trance",
+      "Kind": "Summon",
+      "Amount": 1,
+      "CostFaith": 0,
+      "CostGold": 0,
+      "Cooldown": 5,
+      "CostPower": 6,
+      "Caster": "shaman",
+      "Target": "Tile",
+      "Range": 1,
+      "Radius": 0,
+      "Duration": 8,
+      "Unit": "spirit",
+      "Stat": ""
     },
     {
       "Id": "sh_rain",
       "Name": "Призыв дождя",
       "Description": "",
       "Requires": "sh_weather",
-      "Kind": "Harvest",
-      "Amount": 12,
-      "CostFaith": 40,
+      "Kind": "Bless",
+      "Amount": 50,
+      "CostFaith": 0,
       "CostGold": 0,
-      "Cooldown": 10
+      "Cooldown": 10,
+      "CostPower": 6,
+      "Caster": "",
+      "Target": "City",
+      "Range": 1,
+      "Radius": 0,
+      "Duration": 6,
+      "Unit": "",
+      "Stat": "Food"
     }
   ]
 }
