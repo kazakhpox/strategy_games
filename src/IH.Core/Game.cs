@@ -108,7 +108,38 @@ public sealed partial class Game
     }
 
     public Mover MoverOf(Unit u) => Rules.MoverFor(u.Def, P(u.Owner).Has);
-    public bool Embarked(Unit u) => !u.Def.Sea && S.Tiles[u.Tile].IsWater;
+    public bool Embarked(Unit u) => !u.Def.Sea && !u.Def.X.Flying && S.Tiles[u.Tile].IsWater;
+
+    /// <summary>Fear: the strongest frightening enemy next to the unit saps its strength. Constructs do not care.</summary>
+    public double FearFactor(Unit u)
+    {
+        if (u.Def.X.Construct) return 1;
+        int fear = 0;
+        foreach (int t in Grid.Range(u.Tile, 1))
+        {
+            var here = At(t);
+            for (int i = 0; i < here.Count; i++)
+                if (here[i].Owner != u.Owner && here[i].Def.X.FearPct > fear && AtWar(u.Owner, here[i].Owner)) fear = here[i].Def.X.FearPct;
+        }
+        return 1 - Math.Min(80, fear) / 100.0;
+    }
+
+    /// <summary>Strength where the unit stands: forest affinity and enemy fear included.</summary>
+    public double FieldStr(Unit u) => UnitStr(u) * (S.Tiles[u.Tile].Forest ? 1 + u.Def.X.ForestPct / 100.0 : 1) * FearFactor(u);
+
+    /// <summary>Best defensive aura from the owner's cities in range (totem poles and the like), in percent.</summary>
+    public int AuraDef(Unit u)
+    {
+        int best = 0;
+        foreach (var c in S.Cities.Values)
+        {
+            if (c.Owner != u.Owner) continue;
+            int dist = Grid.Distance(c.Tile, u.Tile);
+            foreach (string id in c.Buildings)
+                if (Rules.Building(id)?.X is { AuraDefPct: > 0 } x && dist <= x.AuraRange && x.AuraDefPct > best) best = x.AuraDefPct;
+        }
+        return best;
+    }
     public bool Coastal(City c) => Grid.Nb[c.Tile].Any(n => S.Tiles[n].IsWater);
 
     /// <summary>The tile as this player knows it: strategic resources stay hidden until their technology.</summary>
@@ -205,7 +236,7 @@ public sealed partial class Game
                 if (missing.Count > 0) return "Сначала нужно: " + string.Join(", ", missing.Select(Rules.RequirementName));
                 p.BranchCurrent[branch.Id] = node.Id; return null;
             }
-            case CmdType.Cast: return CmdCast(p, c.S);
+            case CmdType.Cast: return CmdCast(p, c.S, c.A, c.B);
             case CmdType.FoundReligion: return CmdFoundReligion(p, c.A, c.B);
             case CmdType.Recruit: return CmdRecruit(p, c.A);
             case CmdType.Preach: return CmdPreach(p, c.A);
@@ -281,6 +312,12 @@ public sealed partial class Game
         if (u.Tile == target) { u.Goto = -1; return null; }
         // an order given with no movement left would silently run next turn and eat that turn's move
         if (u.Moves <= 0) return "У юнита не осталось очков движения в этом ходу";
+        if (u.Def.X.Ranged > 0 && Grid.Distance(u.Tile, target) <= u.Def.X.Ranged)
+        {
+            // a ranged unit ordered onto enemies within reach shoots instead of walking into them
+            var foes = At(target).Where(x => x.Owner != u.Owner && AtWar(u.Owner, x.Owner)).ToList();
+            if (foes.Count > 0) { RangedAttack(u, target, foes); return null; }
+        }
         if (PathFor(u, target) == null) return "Туда нет пути";
         u.Goto = target; u.Fortified = false; u.Work = WorkKind.None; u.WorkTurns = 0;
         ContinueGoto(u);
@@ -358,13 +395,30 @@ public sealed partial class Game
             mod += d.Def.CityDefPct / 100.0;
             foreach (var b in city.Buildings) mod += (Rules.Building(b)?.DefPct ?? 0) / 100.0;
         }
-        return UnitStr(d) * mod * d.Hp / 100.0;
+        if (d.ShieldUntil > S.Turn) mod += d.ShieldPct / 100.0;
+        mod += AuraDef(d) / 100.0;
+        return FieldStr(d) * mod * d.Hp / 100.0;
+    }
+
+    /// <summary>One-sided attack from a distance: the target takes damage, the shooter none, nobody moves.</summary>
+    private void RangedAttack(Unit att, int tile, List<Unit> defenders)
+    {
+        var def = defenders.OrderByDescending(DefenseStr).ThenBy(x => x.Id).First();
+        double scale = att.Def.Str > 0 ? FieldStr(att) / att.Def.Str : 1;
+        double a = att.Def.X.RangedStr * scale * att.Hp / 100.0, d = Math.Max(0.1, DefenseStr(def));
+        int dmg = (int)Math.Clamp(25 * (3 * a + d) / (3 * d + a), 8, 70);
+        int defOwner = def.Owner;
+        def.Hp -= dmg;
+        bool killed = def.Hp <= 0;
+        Emit(EventKind.Ranged, att.Tile, tile, att.Owner, defOwner, killed ? "1" : "0", new[] { att.Tile, tile });
+        att.Moves = 0; att.Goto = -1; att.Fortified = false;
+        if (killed) { RemoveUnit(def); CheckDefeat(defOwner); }
     }
 
     private void Attack(Unit att, int tile, List<Unit> defenders)
     {
         var def = defenders.OrderByDescending(DefenseStr).ThenBy(x => x.Id).First();
-        double a = UnitStr(att) * att.Hp / 100.0 * (Embarked(att) ? 0.5 : 1), d = DefenseStr(def);
+        double a = FieldStr(att) * att.Hp / 100.0 * (Embarked(att) ? 0.5 : 1), d = DefenseStr(def);
         int pA = (int)(1000 * a / (a + d));
         int dmgDef = (int)Math.Clamp(20 * (3 * a + d) / (3 * d + a), 6, 60);
         int dmgAtt = (int)Math.Clamp(20 * (3 * d + a) / (3 * a + d), 6, 60);
@@ -378,6 +432,7 @@ public sealed partial class Game
         att.Moves = 0; att.Goto = -1; att.Fortified = false;
         if (!won) { RemoveUnit(att); CheckDefeat(attOwner); return; }
         RemoveUnit(def);
+        if (att.Def.X.Lifesteal > 0) att.Hp = Math.Min(100, att.Hp + att.Def.X.Lifesteal);
         if (!At(tile).Any(x => x.Owner != attOwner && x.Def.Str > 0)) Advance(att, tile, 0);
         CheckDefeat(defOwner);
     }
@@ -439,6 +494,7 @@ public sealed partial class Game
             if (i < 0) return false;
             var d = Rules.Units[i];
             if (d.Role == UnitRole.Missionary) return false; // recruited with faith, never built
+            if (d.X.SummonOnly) return false;                // appears only through a Summon action
             return p.Has(d.Tech) && p.HasResource(d.Needs) && (!d.Sea || Coastal(city));
         }
         if (item.StartsWith("b:"))
@@ -561,21 +617,55 @@ public sealed partial class Game
         return null;
     }
 
-    private string? CmdCast(Player p, string id)
+    private string? CmdCast(Player p, string id, int casterId, int target)
     {
         var a = Rules.Action(id);
         if (a == null) return "Нет такого действия";
+        var branch = Rules.BranchOfAction(a.Id);
         if (!p.Has(a.Requires)) return "Сначала нужно: " + Rules.RequirementName(a.Requires);
         int wait = p.Cooldowns.GetValueOrDefault(a.Id) - S.Turn;
         if (wait > 0) return $"«{a.Name}» можно повторить через {wait} х.";
+        int power = branch == null ? 0 : p.Power.GetValueOrDefault(branch.Id);
+        if (power < a.CostPower) return $"Не хватает ресурса «{branch?.PowerName}»: нужно {a.CostPower}, есть {power}";
         if (p.Faith < a.CostFaith) return $"Недостаточно веры (нужно {a.CostFaith})";
         if (p.Gold < a.CostGold) return $"Недостаточно золота (нужно {a.CostGold})";
+
+        Unit? caster = null;
+        if (a.Caster.Length > 0)
+        {
+            caster = Own(p, casterId, out var err);
+            if (caster == null) return err;
+            if (caster.Def.Id != a.Caster) return $"Это действие выполняет юнит «{Rules.Units.FirstOrDefault(u => u.Id == a.Caster)?.Name ?? a.Caster}»";
+            if (caster.Moves <= 0) return "У заклинателя не осталось очков движения в этом ходу";
+        }
+        City? city = null;
+        if (a.Target == "City")
+        {
+            if (!Grid.Valid(target) || (city = CityAt(target)) == null || city.Owner != p.Id) return "Целью должен быть ваш город";
+        }
+        else if (a.Target == "Tile")
+        {
+            if (!Grid.Valid(target)) return "Выберите клетку";
+            int range = Math.Max(1, a.Range);
+            bool inRange = caster != null ? Grid.Distance(caster.Tile, target) <= range : CitiesOf(p.Id).Any(c => Grid.Distance(c.Tile, target) <= range);
+            if (!inRange) return $"Слишком далеко (дальность {range})";
+            if (p.KnownTiles[target] == 0) return "Эта клетка не разведана";
+        }
+        int origin = caster?.Tile ?? CitiesOf(p.Id).FirstOrDefault(c => c.Capital)?.Tile ?? -1;
+
         int affected = 0;
         switch (a.Kind)
         {
             case "Heal":
                 foreach (var u in UnitsOf(p.Id)) if (u.Hp < 100) { u.Hp = Math.Min(100, u.Hp + a.Amount); affected++; }
                 if (affected == 0) return "Раненых юнитов нет";
+                break;
+            case "HealArea":
+                if (origin < 0) return "Для этого нужна столица";
+                foreach (int t in Grid.Range(origin, Math.Max(1, a.Range)))
+                    foreach (var u in At(t))
+                        if (u.Owner == p.Id && u.Hp < 100) { u.Hp = Math.Min(100, u.Hp + a.Amount); affected++; }
+                if (affected == 0) return "Рядом нет раненых юнитов";
                 break;
             case "Harvest":
                 foreach (var c in CitiesOf(p.Id)) { c.Food += a.Amount; affected++; }
@@ -591,33 +681,95 @@ public sealed partial class Game
             case "Culture": p.CivicProgress += a.Amount; break;
             case "Reveal":
             {
-                var capital = CitiesOf(p.Id).FirstOrDefault(c => c.Capital);
-                if (capital == null) return "Для этого нужна столица";
-                foreach (int t in Grid.Range(capital.Tile, Math.Clamp(a.Amount, 1, 30)))
+                if (origin < 0) return "Для этого нужна столица";
+                foreach (int t in Grid.Range(origin, Math.Clamp(a.Amount, 1, 30)))
                     if (p.KnownTiles[t] == 0) { p.KnownTiles[t] = Seen(p, S.Tiles[t]).Pack() | TileData.ExploredBit; affected++; }
-                if (affected == 0) return "Вокруг столицы всё уже разведано";
+                if (affected == 0) return "Вокруг всё уже разведано";
                 break;
             }
             case "Smite":
+            case "Damage":
             {
-                var victims = S.Units.Values.Where(u => u.Owner != p.Id && AtWar(p.Id, u.Owner) && S.Tiles[u.Tile].Owner == p.Id).ToList();
-                if (victims.Count == 0) return "На вашей территории нет вражеских юнитов";
-                foreach (var u in victims)
+                var hit = new List<(Unit unit, int dmg)>();
+                if (a.Kind == "Smite")
+                    hit.AddRange(S.Units.Values.Where(u => u.Owner != p.Id && AtWar(p.Id, u.Owner) && S.Tiles[u.Tile].Owner == p.Id).Select(u => (u, a.Amount)));
+                else
+                    foreach (int t in Grid.Range(target, Math.Max(0, a.Radius)))
+                        hit.AddRange(At(t).Where(u => u.Owner != p.Id && AtWar(p.Id, u.Owner)).Select(u => (u, t == target ? a.Amount : a.Amount / 2)));
+                if (hit.Count == 0) return a.Kind == "Smite" ? "На вашей территории нет вражеских юнитов" : "В зоне удара нет вражеских юнитов";
+                var owners = hit.Select(h => h.unit.Owner).Distinct().ToList();
+                bool anyDead = false;
+                foreach (var (u, dmg) in hit.OrderBy(h => h.unit.Id))
                 {
-                    u.Hp -= a.Amount;
+                    u.Hp -= dmg;
                     if (u.Hp > 0) continue;
-                    int owner = u.Owner;
+                    anyDead = true;
                     RemoveUnit(u);
-                    CheckDefeat(owner);
                 }
-                foreach (int owner in victims.Select(u => u.Owner).Distinct())
+                foreach (int owner in owners)
+                {
+                    CheckDefeat(owner);
                     Emit(EventKind.Info, s: $"«{p.Name}» обрушивает на ваши войска «{a.Name}»", only: owner);
+                }
+                if (a.Kind == "Damage")
+                    Emit(EventKind.Ranged, origin >= 0 ? origin : target, target, p.Id, owners[0], anyDead ? "1" : "0", new[] { target });
+                break;
+            }
+            case "Summon":
+            {
+                int type = Rules.UnitIndex(a.Unit);
+                if (type < 0) return "Призываемого юнита не существует";
+                int spot = a.Target == "None" ? origin : target;
+                if (spot < 0) return "Некуда призывать";
+                var def = Rules.Units[type];
+                var tile = S.Tiles[spot];
+                bool fits = def.X.Flying || (def.Sea ? tile.IsWater : tile.Passable);
+                if (!fits) return "Здесь призванный юнит не сможет находиться";
+                if (At(spot).Any(u => u.Owner != p.Id) || (CityAt(spot) is { } there && there.Owner != p.Id)) return "Клетка занята чужими силами";
+                var summoned = AddUnit(p.Id, type, spot);
+                summoned.Moves = 0;
+                if (a.Duration > 0) summoned.Expires = S.Turn + a.Duration;
+                break;
+            }
+            case "Bless":
+                city!.Buffs.RemoveAll(b => b.Stat == a.Stat);
+                city.Buffs.Add(new CityBuff { Stat = a.Stat, Amount = a.Amount, Until = S.Turn + Math.Max(1, a.Duration) });
+                break;
+            case "Forest":
+            {
+                ref var tile = ref S.Tiles[target];
+                if (!tile.Passable || tile.CityId >= 0) return "Лес здесь не вырастет";
+                if (tile.Forest) return "Здесь уже лес";
+                if (tile.Terrain is Terrain.Desert or Terrain.Snow) return "В пустыне и снегах лес не вырастет";
+                if (tile.Improvement != Improvement.None) return "Клетка занята улучшением";
+                if (tile.Owner >= 0 && tile.Owner != p.Id) return "Это чужая земля";
+                tile.Forest = true;
+                break;
+            }
+            case "Shield":
+                foreach (var u in At(target))
+                    if (u.Owner == p.Id) { u.ShieldPct = a.Amount; u.ShieldUntil = S.Turn + Math.Max(1, a.Duration); affected++; }
+                if (affected == 0) return "На этой клетке нет ваших юнитов";
+                break;
+            case "Teleport":
+            {
+                if (caster == null || city == null) return "Телепорту нужны заклинатель и ваш город";
+                if (caster.Tile == city.Tile) return "Заклинатель уже в этом городе";
+                int from = caster.Tile;
+                foreach (var u in At(from).Where(u => u.Owner == p.Id).ToList())
+                {
+                    Relocate(u, city.Tile);
+                    u.Moves = 0; u.Goto = -1; u.Fortified = false;
+                    Emit(EventKind.UnitMoved, u.Id, from, city.Tile, tiles: new[] { from, city.Tile });
+                }
                 break;
             }
             default: return "Неизвестный вид действия";
         }
         p.Faith -= a.CostFaith; p.Gold -= a.CostGold;
+        if (branch != null) p.Power[branch.Id] = power - a.CostPower;
         p.Cooldowns[a.Id] = S.Turn + Math.Max(1, a.Cooldown);
+        if (caster != null && S.Units.ContainsKey(caster.Id)) { caster.Moves = 0; caster.Goto = -1; }
         Emit(EventKind.Info, s: $"{a.Name}: {a.Effect()}", only: p.Id);
         return null;
     }

@@ -55,7 +55,7 @@ for (int i = 0; i < args.Length; i++)
 }
 
 // custom branches: created with examples on first run, then read on every start
-if (!sim && mods != null && !Directory.Exists(mods)) { try { ModLoader.Export(mods); } catch (IOException) { } }
+if (!sim && mods != null) { try { ModLoader.Export(mods); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } }
 Rules.SetBranches(ModLoader.Load(mods, Console.WriteLine));
 
 if (sim) { Simulation.Run(simTurns, simPlayers, simSeed, noBalance, opt.Balance, true, simStrong, simMap); return 0; }

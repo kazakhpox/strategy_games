@@ -21,7 +21,7 @@ public enum CmdType : byte
     Recruit,        // A=city: buy a missionary with faith
     Preach,         // A=unit: spend a missionary on the city it stands in
     SetNode,        // S=node id of a custom branch
-    Cast,           // S=action id
+    Cast,           // S=action id, A=caster unit (0 = the empire), B=target tile (-1 = none)
 }
 
 public enum EventKind : byte
@@ -49,6 +49,7 @@ public enum EventKind : byte
     ReligionFounded, // A=player, B=religion id, S=name
     CityConverted,   // A=city, B=religion id (0 = none), S=city name
     NodeDone,        // S=node id
+    Ranged,          // A=from tile, B=target tile, C=attacker owner, D=target owner, S="1" if the target died
 }
 
 public enum ProposalKind : byte { Peace, OpenBorders }
@@ -151,10 +152,12 @@ public sealed class TileDto : IWire
 public sealed class UnitDto : IWire
 {
     public int Id, Owner, Type, Tile, Hp, Moves, WorkTurns, Goto = -1; public byte Work; public bool Fortified;
+    /// <summary>Turns a summoned unit has left (0 = permanent) and its active shield in percent.</summary>
+    public int Expires, Shield;
     public void Sync(Wire w)
     {
         w.I(ref Id); w.I(ref Owner); w.I(ref Type); w.I(ref Tile); w.I(ref Hp); w.I(ref Moves);
-        w.I(ref WorkTurns); w.I(ref Goto); w.By(ref Work); w.B(ref Fortified);
+        w.I(ref WorkTurns); w.I(ref Goto); w.By(ref Work); w.B(ref Fortified); w.I(ref Expires); w.I(ref Shield);
     }
     public UnitDef Def => Rules.Units[Type];
 }
@@ -167,11 +170,13 @@ public sealed class CityDetail : IWire
     public int[] Worked = Array.Empty<int>();
     /// <summary>Religious pressure in the city: pairs of (religion id, points).</summary>
     public int[] Pressure = Array.Empty<int>();
+    /// <summary>Temporary blessings on the city, ready to display.</summary>
+    public string[] Buffs = Array.Empty<string>();
     public void Sync(Wire w)
     {
         w.I(ref Food); w.I(ref FoodNeed); w.I(ref FoodRate); w.I(ref Prod); w.I(ref ProdRate); w.I(ref Commerce);
         w.I(ref Science); w.I(ref Gold); w.I(ref Culture); w.I(ref CultureRate); w.I(ref Happy); w.I(ref Unhappy);
-        w.I(ref Unrest); w.I(ref DisorderTurns); w.I(ref Maint); w.SA(ref Queue); w.SA(ref Buildings); w.IA(ref Worked); w.IA(ref Pressure);
+        w.I(ref Unrest); w.I(ref DisorderTurns); w.I(ref Maint); w.SA(ref Queue); w.SA(ref Buildings); w.IA(ref Worked); w.IA(ref Pressure); w.SA(ref Buffs);
     }
 }
 
@@ -243,6 +248,8 @@ public sealed class MeDto : IWire
     public int[] BranchProgress = Array.Empty<int>(), BranchRate = Array.Empty<int>();
     /// <summary>Turns until each action can be used again, indexed like Rules.Actions.</summary>
     public int[] Cooldowns = Array.Empty<int>();
+    /// <summary>Stored branch power and its income, indexed like Rules.Branches.</summary>
+    public int[] Power = Array.Empty<int>(), PowerRate = Array.Empty<int>();
     public string Research = "";
     public string[] Known = Array.Empty<string>();
     public int[] Future = new int[4];
@@ -261,7 +268,7 @@ public sealed class MeDto : IWire
         w.IA(ref Resources); w.IA(ref Votes);
         w.S(ref Civic); w.SA(ref Civics); w.I(ref CivicProgress); w.I(ref CivicLevel); w.I(ref CultureRate); w.I(ref MyReligion);
         w.A(ref Religions);
-        w.SA(ref Nodes); w.SA(ref BranchCurrent); w.IA(ref BranchProgress); w.IA(ref BranchRate); w.IA(ref Cooldowns);
+        w.SA(ref Nodes); w.SA(ref BranchCurrent); w.IA(ref BranchProgress); w.IA(ref BranchRate); w.IA(ref Cooldowns); w.IA(ref Power); w.IA(ref PowerRate);
     }
 }
 

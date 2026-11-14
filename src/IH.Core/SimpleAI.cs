@@ -30,9 +30,14 @@ public static class SimpleAI
         }
         // rites and spells: use whatever currently does something, keeping a reserve for religion
         foreach (var a in Rules.Actions)
-            if (p.Has(a.Requires) && p.Faith >= a.CostFaith + 40 && p.Gold >= a.CostGold + 30
-                && (a.Kind != "Heal" || g.UnitsOf(p.Id).Count(u => u.Hp <= 60) >= 2))
-                Do(g, p, CmdType.Cast, s: a.Id); // refused by the rules when it would have no effect
+        {
+            // empire-level rites; caster spells are decided unit by unit
+            if (a.Caster.Length > 0 || a.Target == "Tile" || !p.Has(a.Requires)) continue;
+            if (p.Faith < a.CostFaith + (a.CostFaith > 0 ? 40 : 0) || p.Gold < a.CostGold + (a.CostGold > 0 ? 30 : 0)) continue;
+            if (a.Kind == "Heal" && g.UnitsOf(p.Id).Count(u => u.Hp <= 60) < 2) continue;
+            int target = a.Target == "City" ? g.CitiesOf(p.Id).OrderByDescending(c => c.Pop).ThenBy(c => c.Id).FirstOrDefault()?.Tile ?? -1 : -1;
+            Do(g, p, CmdType.Cast, 0, target, 0, a.Id); // refused by the rules when it cannot be paid or would do nothing
+        }
         Faith(g, p);
         // shortly before each congress, back ourselves with half of the accumulated favor
         if (g.S.Turn % Rules.CongressPeriod == Rules.CongressPeriod - 2 && p.Favor >= 10) Do(g, p, CmdType.Vote, p.Id, p.Favor / 2);
@@ -197,6 +202,7 @@ public static class SimpleAI
             else if (broke && !war) item = Rules.Wealth;
             else if (cities.Count + settlers < target && c.Pop >= 2 && BestSite(g, p, c.Tile, 8).tile >= 0) { item = "u:settler"; settlers++; }
             else if (workers < Math.Min(cities.Count, 6)) { item = "u:worker"; workers++; }
+            else if (Specialist(g, p, c, units) is { } special) item = special;
             else if (military < cities.Count * (war ? 4 : 2) && (building == null || (c.Id + g.S.Turn) % 2 == 0)) { item = soldier; military++; }
             else if (building != null) item = "b:" + building.Id;
             else if (military < cities.Count * (war ? 5 : 3)) { item = soldier; military++; }
@@ -296,11 +302,71 @@ public static class SimpleAI
         else Do(g, p, CmdType.MoveUnit, u.Id, best);
     }
 
+    /// <summary>Keeps a few support and caster units around: healers, ranged units, anything that performs actions.</summary>
+    private static string? Specialist(Game g, Player p, City c, List<Unit> units)
+    {
+        int want = 1 + g.CitiesOf(p.Id).Count() / 3;
+        foreach (var d in Rules.Units)
+        {
+            bool special = d.X.HealAura > 0 || d.X.Ranged > 0 || Rules.Actions.Any(a => a.Caster == d.Id);
+            if (!special || !g.CanBuild(p, c, "u:" + d.Id)) continue;
+            if (units.Count(u => u.Def.Id == d.Id) + g.CitiesOf(p.Id).Count(x => x.Queue.Contains("u:" + d.Id)) < want) return "u:" + d.Id;
+        }
+        return null;
+    }
+
+    private static bool TryCast(Game g, Player p, Unit u, HashSet<int> enemies)
+    {
+        if (u.Moves <= 0) return false;
+        var grid = g.Grid;
+        foreach (var a in Rules.Actions)
+        {
+            if (a.Caster != u.Def.Id || !p.Has(a.Requires)) continue;
+            int range = Math.Max(1, a.Range), target = -1;
+            switch (a.Kind)
+            {
+                case "HealArea":
+                    if (!grid.Range(u.Tile, range).Any(t => g.At(t).Any(f => f.Owner == p.Id && f.Hp <= 60))) continue;
+                    break;
+                case "Damage":
+                    target = grid.Range(u.Tile, range)
+                        .Select(t => (t, n: g.At(t).Count(e => enemies.Contains(e.Owner))))
+                        .Where(x => x.n > 0 && p.KnownTiles[x.t] != 0).OrderByDescending(x => x.n).ThenBy(x => x.t).Select(x => x.t).DefaultIfEmpty(-1).First();
+                    if (target < 0) continue;
+                    break;
+                case "Summon":
+                    if (!g.S.Units.Values.Any(e => enemies.Contains(e.Owner) && grid.Distance(e.Tile, u.Tile) <= 4)) continue;
+                    target = grid.Range(u.Tile, range).Where(t => g.S.Tiles[t].Passable && g.CityAt(t) == null && !g.At(t).Any(x => x.Owner != p.Id))
+                        .DefaultIfEmpty(-1).First();
+                    if (target < 0) continue;
+                    break;
+                case "Shield":
+                    if (!g.S.Units.Values.Any(e => enemies.Contains(e.Owner) && grid.Distance(e.Tile, u.Tile) <= 3)) continue;
+                    target = u.Tile;
+                    break;
+                case "Forest":
+                    if (g.Rand(100) >= 12) continue;
+                    target = grid.Range(u.Tile, range).Where(t =>
+                    {
+                        var tile = g.S.Tiles[t];
+                        return tile.Owner == p.Id && tile.Passable && !tile.Forest && tile.CityId < 0 && tile.Improvement == Improvement.None
+                               && tile.Resource == Resource.None && tile.Terrain is Terrain.Grassland or Terrain.Plains or Terrain.Tundra;
+                    }).DefaultIfEmpty(-1).First();
+                    if (target < 0) continue;
+                    break;
+                default: continue; // teleports and the like need a plan the simple AI does not make
+            }
+            if (Do(g, p, CmdType.Cast, u.Id, target, 0, a.Id) == null) return true;
+        }
+        return false;
+    }
+
     private static void Soldier(Game g, Player p, Unit u)
     {
         var grid = g.Grid;
         var here = g.CityAt(u.Tile);
         var enemies = g.Active.Where(q => q.Id != p.Id && g.Rel(p.Id, q.Id).AtWar).Select(q => q.Id).ToHashSet();
+        if (TryCast(g, p, u, enemies)) return;
         bool military = g.IsMilitary(u);
 
         // garrison duty: the oldest units in a city stay
@@ -324,7 +390,8 @@ public static class SimpleAI
             if (prey != null)
             {
                 double def = prey.Def.Str > 0 ? g.DefenseStr(prey) : 0;
-                if (g.UnitStr(u) * u.Hp / 100.0 >= 0.75 * def && Do(g, p, CmdType.MoveUnit, u.Id, prey.Tile) == null) return;
+                bool shoot = u.Def.X.Ranged > 0 && bestD <= u.Def.X.Ranged; // no risk in shooting
+                if ((shoot || g.UnitStr(u) * u.Hp / 100.0 >= 0.75 * def) && Do(g, p, CmdType.MoveUnit, u.Id, prey.Tile) == null) return;
             }
             if (u.Hp >= 60)
             {

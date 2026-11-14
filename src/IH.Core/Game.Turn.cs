@@ -160,6 +160,8 @@ public sealed partial class Game
         fx.Add(Rules.NodeBonus(p.Nodes)); // custom branches use the same kinds of bonus
         p.CivicFx = fx;
         var founded = FoundedBy(p.Id);
+        // branch power: from learned nodes everywhere, from buildings in orderly cities
+        var power = Rules.Branches.ToDictionary(b => b.Id, b => b.Nodes.Where(n => p.Nodes.Contains(n.Id)).Sum(n => n.Power));
 
         foreach (var c in cities)
         {
@@ -168,7 +170,19 @@ public sealed partial class Game
             int happyCap = 5 + p.Luxuries + p.Future[Rules.BranchSocial] / 2 + fx.Happy + (bel?.Happy ?? 0);
             int foodFlat = fx.Food + (bel?.Food ?? 0), comFlat = 0, culFlat = 1 + fx.Culture + (bel?.Culture ?? 0);
             double prodPct = fx.ProdPct + (bel?.ProdPct ?? 0), sciPct = fx.SciPct + (bel?.SciPct ?? 0), goldPct = fx.GoldPct + (bel?.GoldPct ?? 0);
-            double culPct = fx.CulPct + (bel?.CulPct ?? 0), maintCut = 0, upkeep = 0, cityFaith = 0;
+            double culPct = fx.CulPct + (bel?.CulPct ?? 0), maintCut = 0, upkeep = 0, cityFaith = 0, foodPct = 0;
+            foreach (var buff in c.Buffs)
+            {
+                if (buff.Until <= S.Turn) continue;
+                switch (buff.Stat)
+                {
+                    case "Food": foodPct += buff.Amount; break;
+                    case "Prod": prodPct += buff.Amount; break;
+                    case "Sci": sciPct += buff.Amount; break;
+                    case "Gold": goldPct += buff.Amount; break;
+                    case "Culture": culPct += buff.Amount; break;
+                }
+            }
             foreach (var id in c.Buildings)
             {
                 var b = Rules.Building(id);
@@ -177,6 +191,8 @@ public sealed partial class Game
                 prodPct += b.ProdPct; sciPct += b.SciPct; goldPct += b.GoldPct; culPct += b.CulPct;
                 maintCut = Math.Max(maintCut, b.MaintCutPct); upkeep += b.Upkeep;
                 if (c.DisorderTurns == 0) cityFaith += b.Faith;
+                if (c.DisorderTurns == 0 && b.X.Power > 0 && Rules.BranchOfBuilding(b.Id) is { } owner)
+                    power[owner.Id] = power.GetValueOrDefault(owner.Id) + b.X.Power;
             }
             c.Happy = happyCap;
             c.Unhappy = Math.Min(c.Pop, Math.Max(0, c.Pop - happyCap) + Math.Min(2, c.Unrest / 40));
@@ -205,6 +221,7 @@ public sealed partial class Game
                 f += cand[i].f; pr += cand[i].pr; co += cand[i].co;
             }
             f += foodFlat; co += comFlat + workers; // every working citizen also trades
+            if (foodPct != 0) f = (int)(f * (1 + foodPct / 100.0));
 
             if (c.DisorderTurns > 0)
             {
@@ -231,7 +248,7 @@ public sealed partial class Game
             sci += c.SciRate; gold += c.GoldRate; bUp += upkeep; maint += c.Maint;
         }
 
-        int units = UnitsOf(p.Id).Count();
+        int units = UnitsOf(p.Id).Count(u => !u.Def.X.Construct && u.Expires == 0); // constructs and summons cost nothing
         p.Income = gold; p.SciRate = sci;
         p.UnitUpkeep = Math.Max(0, units - (4 + 3 * cities.Count));
         p.BuildingUpkeep = bUp; p.CityMaint = maint; p.RoadUpkeep = roads * 0.15;
@@ -250,6 +267,7 @@ public sealed partial class Game
         double baseCost = (p.UnitUpkeep + p.BuildingUpkeep + p.CityMaint + p.RoadUpkeep) * (1 - Math.Min(60, fx.UpkeepCutPct) / 100.0);
         p.StrainCost = baseCost * (p.UpkeepMult - 1);
         p.FaithRate = faith;
+        p.PowerRate = power;
         int partners = 0; bool atWar = false;
         foreach (var o in Active)
         {
@@ -280,12 +298,15 @@ public sealed partial class Game
                 }
                 u.Work = WorkKind.None; u.WorkTurns = 0;
             }
-            if (u.Hp < 100 && u.Moves == u.MaxMoves)
+            if (u.Def.X.Regen > 0) u.Hp = Math.Min(100, u.Hp + u.Def.X.Regen);
+            if (u.Hp < 100 && u.Moves == u.MaxMoves && !u.Def.X.Construct)
             {
                 var city = CityAt(u.Tile);
                 u.Hp = Math.Min(100, u.Hp + (city != null && city.Owner == p.Id ? 25 : S.Tiles[u.Tile].Owner == p.Id ? 15 : 10));
             }
         }
+
+        ProcessBranchEffects(p);
 
         var capital = CitiesOf(p.Id).FirstOrDefault(c => c.Capital);
         int cityCount = CitiesOf(p.Id).Count();
@@ -372,6 +393,48 @@ public sealed partial class Game
             }
         }
         RefreshEconomy(p);
+    }
+
+    /// <summary>End-of-turn mechanics that come from branch content: summons fading, auras, bombardment, power income.</summary>
+    private void ProcessBranchEffects(Player p)
+    {
+        foreach (var u in UnitsOf(p.Id).Where(u => u.Expires > 0 && S.Turn + 1 >= u.Expires).ToList())
+        {
+            RemoveUnit(u);
+            Emit(EventKind.Info, s: $"{u.Def.Name}: срок призыва истёк", only: p.Id);
+        }
+        foreach (var healer in UnitsOf(p.Id).Where(u => u.Def.X.HealAura > 0).OrderBy(u => u.Id).ToList())
+            foreach (int t in Grid.Range(healer.Tile, 1))
+                foreach (var f in At(t))
+                    if (f.Owner == p.Id && f.Hp < 100 && !f.Def.X.Construct) f.Hp = Math.Min(100, f.Hp + healer.Def.X.HealAura);
+
+        foreach (var c in CitiesOf(p.Id).OrderBy(c => c.Id).ToList())
+        {
+            c.Buffs.RemoveAll(b => b.Until <= S.Turn + 1);
+            foreach (string id in c.Buildings.OrderBy(x => x, StringComparer.Ordinal))
+            {
+                var x = Rules.Building(id)?.X;
+                if (x == null) continue;
+                if (x.UnitHeal > 0)
+                    foreach (int t in Grid.Range(c.Tile, 1))
+                        foreach (var f in At(t))
+                            if (f.Owner == p.Id && f.Hp < 100) f.Hp = Math.Min(100, f.Hp + x.UnitHeal);
+                if (x.Bombard > 0 && c.DisorderTurns == 0)
+                {
+                    var target = S.Units.Values
+                        .Where(e => e.Owner != p.Id && AtWar(p.Id, e.Owner) && Grid.Distance(c.Tile, e.Tile) <= Math.Max(1, x.BombardRange))
+                        .OrderBy(e => Grid.Distance(c.Tile, e.Tile)).ThenBy(e => e.Id).FirstOrDefault();
+                    if (target == null) continue;
+                    int owner = target.Owner, tile = target.Tile;
+                    target.Hp -= x.Bombard;
+                    bool dead = target.Hp <= 0;
+                    Emit(EventKind.Ranged, c.Tile, tile, p.Id, owner, dead ? "1" : "0", new[] { c.Tile, tile });
+                    if (dead) { RemoveUnit(target); CheckDefeat(owner); }
+                }
+            }
+        }
+        foreach (var b in Rules.Branches)
+            p.Power[b.Id] = Math.Min(Rules.PowerCap, p.Power.GetValueOrDefault(b.Id) + p.PowerRate.GetValueOrDefault(b.Id));
     }
 
     public void Learn(Player p, TechDef t)

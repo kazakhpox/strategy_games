@@ -33,6 +33,8 @@ public sealed class Unit
     public int Id, Owner, Type, Tile, Hp = 100, Moves, WorkTurns, Goto = -1;
     /// <summary>For missionaries: the religion they spread.</summary>
     public int Religion;
+    /// <summary>Summoned units vanish on this turn (0 = permanent). A shield adds ShieldPct to defence while the turn is below ShieldUntil.</summary>
+    public int Expires, ShieldPct, ShieldUntil;
     public WorkKind Work;
     public bool Fortified;
     public UnitDef Def => Rules.Units[Type];
@@ -50,6 +52,8 @@ public sealed class City
     /// <summary>Majority religion (0 = none) and accumulated pressure per religion id.</summary>
     public int Religion;
     public Dictionary<int, int> Pressure = new();
+    /// <summary>Temporary blessings from branch actions.</summary>
+    public List<CityBuff> Buffs = new();
     public HashSet<string> Buildings = new();
     // derived each refresh
     public List<int> Worked = new();
@@ -103,9 +107,12 @@ public sealed class Player
     public bool Has(string? tech) => tech == null || Rules.Satisfied(tech, Known, Future, Civics, CivicLevel, Nodes);
     /// <summary>Action id -> first turn it may be used again.</summary>
     public Dictionary<string, int> Cooldowns = new();
+    /// <summary>Branch id -> stored power (mana, spirits...) and its income per turn.</summary>
+    public Dictionary<string, int> Power = new(), PowerRate = new();
     public int TechCount => Known.Count + Future.Sum();
 }
 
+public sealed class CityBuff { public string Stat = ""; public int Amount, Until; }
 public sealed class Religion { public int Id, Founder, Belief, HolyCity; public string Name = ""; }
 public sealed class Relation { public bool AtWar, OpenBorders, Met; public int SinceTurn; }
 public sealed class Proposal { public int Id, From, To; public ProposalKind Kind; }

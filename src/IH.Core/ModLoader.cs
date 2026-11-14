@@ -74,6 +74,10 @@ public static class ModLoader
             if (u.Str <= 0 || u.Str > 500) errors.Add($"юнит {u.Id}: Str должен быть от 1 до 500");
             if (u.Moves < 1 || u.Moves > 8) errors.Add($"юнит {u.Id}: Moves должен быть от 1 до 8");
             if (!Resolves(u.Requires)) errors.Add($"юнит {u.Id}: требование «{u.Requires}» не найдено");
+            if (u.Ranged < 0 || u.Ranged > 4) errors.Add($"юнит {u.Id}: Ranged (дальность) должен быть от 0 до 4");
+            if (u.Ranged > 0 && u.RangedStr <= 0) errors.Add($"юнит {u.Id}: для дальнего боя задайте RangedStr");
+            if (u.FearPct < 0 || u.FearPct > 80) errors.Add($"юнит {u.Id}: FearPct должен быть от 0 до 80");
+            if (u.HealAura < 0 || u.Regen < 0 || u.Lifesteal < 0 || u.ForestPct < 0) errors.Add($"юнит {u.Id}: способности не могут быть отрицательными");
         }
         foreach (var m in b.Buildings)
         {
@@ -81,14 +85,33 @@ public static class ModLoader
             CheckId("здание", m.Id, m.Name);
             if (m.Cost <= 0) errors.Add($"здание {m.Id}: Cost должен быть больше нуля");
             if (!Resolves(m.Requires)) errors.Add($"здание {m.Id}: требование «{m.Requires}» не найдено");
+            if (m.Power < 0 || m.UnitHeal < 0 || m.Bombard < 0 || m.AuraDefPct < 0) errors.Add($"здание {m.Id}: механики не могут быть отрицательными");
+            if (m.BombardRange > 4 || m.AuraRange > 4) errors.Add($"здание {m.Id}: BombardRange и AuraRange не больше 4");
         }
+        var unitIds = b.Units.Select(u => u.Id).Concat(others.Where(o => o.Id != b.Id).SelectMany(o => o.Units).Select(u => u.Id)).ToHashSet();
+        bool UnitExists(string id) => unitIds.Contains(id) || Rules.IsBaseUnitId(id);
         foreach (var a in b.Actions)
         {
             a.Requires ??= ""; a.Description ??= "";
             CheckId("действие", a.Id, a.Name);
             if (!Rules.ActionKinds.Contains(a.Kind)) errors.Add($"действие {a.Id}: Kind «{a.Kind}» неизвестен; допустимы {string.Join(", ", Rules.ActionKinds)}");
             if (a.Amount <= 0) errors.Add($"действие {a.Id}: Amount должен быть больше нуля");
-            if (a.CostFaith < 0 || a.CostGold < 0 || a.CostFaith + a.CostGold <= 0) errors.Add($"действие {a.Id}: задайте цену CostFaith и/или CostGold");
+            a.Caster ??= ""; a.Unit ??= ""; a.Stat ??= ""; a.Target = string.IsNullOrEmpty(a.Target) ? "None" : a.Target;
+            if (a.CostFaith < 0 || a.CostGold < 0 || a.CostPower < 0 || a.CostFaith + a.CostGold + a.CostPower <= 0)
+                errors.Add($"действие {a.Id}: задайте цену CostPower, CostFaith и/или CostGold");
+            if (a.Target is not ("None" or "Tile" or "City")) errors.Add($"действие {a.Id}: Target должен быть None, Tile или City");
+            if (a.Caster.Length > 0 && !UnitExists(a.Caster)) errors.Add($"действие {a.Id}: юнит-исполнитель «{a.Caster}» не найден");
+            if (a.Range < 0 || a.Range > 6) errors.Add($"действие {a.Id}: Range должен быть от 0 до 6");
+            string need = a.Kind switch
+            {
+                "Damage" or "Forest" or "Shield" => "Tile", "Bless" or "Teleport" => "City", "Summon" => a.Target == "None" ? "None" : a.Target,
+                _ => "None",
+            };
+            if (a.Target != need) errors.Add($"действие {a.Id}: для Kind «{a.Kind}» нужен Target «{need}»");
+            if (a.Kind is "HealArea" or "Teleport" && a.Caster.Length == 0) errors.Add($"действие {a.Id}: Kind «{a.Kind}» требует исполнителя (Caster)");
+            if (a.Kind == "Summon" && !UnitExists(a.Unit)) errors.Add($"действие {a.Id}: призываемый юнит «{a.Unit}» не найден");
+            if (a.Kind == "Bless" && !Rules.BlessStats.Contains(a.Stat)) errors.Add($"действие {a.Id}: Stat должен быть одним из {string.Join(", ", Rules.BlessStats)}");
+            if (a.Kind is "Bless" or "Shield" && a.Duration < 1) errors.Add($"действие {a.Id}: задайте Duration (сколько ходов действует)");
             if (a.Cooldown < 1) errors.Add($"действие {a.Id}: Cooldown должен быть не меньше 1");
             if (!Resolves(a.Requires)) errors.Add($"действие {a.Id}: требование «{a.Requires}» не найдено");
         }
@@ -123,6 +146,12 @@ public static class ModLoader
             try
             {
                 var b = Parse(File.ReadAllText(path));
+                if (Rules.DefaultBranches().Any(d => d.Id == b.Id) && b.Version < Rules.BuiltInVersion)
+                {
+                    // a copy of a built-in branch exported by an older game would hide the newer built-in content
+                    log?.Invoke($"  Мод {file} пропущен: это устаревшая копия встроенной ветки (Version {b.Version} < {Rules.BuiltInVersion}). Свежий образец — в папке examples.");
+                    continue;
+                }
                 var rest = result.Where(o => o.Id != b.Id).ToList();
                 var errors = Validate(b, rest);
                 if (errors.Count > 0)
@@ -155,67 +184,85 @@ public static class ModLoader
     }
 
     /// <summary>Writes the built-in branches and a short guide, as a starting point for the player's own files.</summary>
+    /// <summary>
+    /// Writes the built-in branches and a guide into "examples" inside the mods folder. That subfolder is
+    /// never loaded, so it can be refreshed on every start without touching the player's own files.
+    /// </summary>
     public static void Export(string dir)
     {
-        Directory.CreateDirectory(dir);
-        foreach (var b in Rules.DefaultBranches()) File.WriteAllText(Path.Combine(dir, b.Id + ".json"), ToJson(b));
+        string examples = Path.Combine(dir, "examples");
+        Directory.CreateDirectory(examples);
+        foreach (var b in Rules.DefaultBranches()) File.WriteAllText(Path.Combine(examples, b.Id + ".json"), ToJson(b));
         File.WriteAllText(Path.Combine(dir, "КАК_СДЕЛАТЬ_ВЕТКУ.txt"), Guide);
     }
 
     public const string Guide = """
         СВОИ ВЕТКИ РАЗВИТИЯ
         ===================
-        Каждый файл *.json в этой папке — одна ветка. Скопируйте magic.json, переименуйте и измените.
+        Каждый файл *.json прямо в этой папке — одна ветка. Образцы лежат в подпапке examples
+        (она не загружается и обновляется при каждом запуске сервера): скопируйте оттуда magic.json
+        сюда, переименуйте, поменяйте Id — и правьте.
         Изменения вступают в силу при следующем запуске сервера (кнопка «Создать сервер» в игре).
         Файлы нужны только хосту: остальным игрокам ветки передаются по сети.
 
-        Поля ветки:
-          Id            короткое имя латиницей, уникальное (например "necromancy")
-          Name          название в игре
-          Description   пояснение
-          FromScience   какая доля науки за ход идёт в ветку (0.4 = 40%)
-          FromCulture   то же для культуры
-          FromFaith     то же для веры
-          Enabled       false — отключить ветку (так можно убрать и встроенную)
-          Nodes         список узлов
+        ВЕТКА
+          Id, Name, Description
+          FromScience / FromCulture / FromFaith   какая доля науки, культуры, веры за ход идёт в ветку (0.4 = 40%)
+          PowerName     название собственного ресурса ветки ("Мана", "Духи" ...) — на него творятся действия
+          Version       для своих веток не нужен; чтобы ЗАМЕНИТЬ встроенную ветку, оставьте Version как в образце
+          Enabled       false — отключить ветку
+          Nodes, Units, Buildings, Actions
 
-        Поля узла:
-          Id        уникальное имя латиницей (например "nc_bones")
-          Name      название
-          Cost      цена в очках ветки
-          Requires  что нужно освоить раньше. Сюда можно писать id:
-                      - узлов этой или любой другой ветки ("sh_trance")
-                      - технологий ("writing", "iron_working", "education" ...)
-                      - социальных институтов ("c_tribal", "c_rites", "c_humanism" ...)
-          Effect    бонус всей империи; любые из полей:
-                      SciPct GoldPct ProdPct CulPct FaithPct   проценты к науке, золоту, производству, культуре, вере
-                      StrPct          проценты к силе юнитов
-                      UpkeepCutPct    на сколько процентов дешевле содержание
-                      Happy           довольство в каждом городе
-                      Calm            на сколько меньше брожения за ход
-                      Food  Culture   пища и культура в каждом городе
-                      Favor           дипломатическое одобрение за ход
+        УЗЕЛ (Nodes)
+          Id, Name, Cost
+          Requires  список id того, что нужно освоить раньше: узлы этой или другой ветки ("sh_trance"),
+                    технологии ("writing"), социальные институты ("c_rites")
+          Power     сколько ресурса ветки узел даёт каждый ход
+          Effect    бонус всей империи: SciPct GoldPct ProdPct CulPct FaithPct StrPct UpkeepCutPct
+                    Happy Calm Food Culture Favor
 
-        Кроме узлов ветка может открывать юнитов, здания и действия (списки Units, Buildings, Actions).
-        У каждого в поле Requires — id узла (или технологии, института), который его открывает.
+        ЮНИТ (Units)  — Requires здесь и ниже: один id, который открывает
+          Id, Name, Requires, Cost, Str (сила), Moves, CityDefPct, Sight, Sea
+          Способности:
+            Ranged + RangedStr   дальний бой: дальность и сила выстрела, без ответного урона
+            HealAura     лечит союзников на своей и соседних клетках за ход
+            Regen        лечит себя каждый ход
+            FearPct      враги рядом слабее на столько процентов
+            ForestPct    бонус силы в лесу
+            Lifesteal    HP после победы в ближнем бою
+            Stealth      true — виден врагу только вплотную
+            Flying       true — летает через горы и воду
+            Construct    true — без содержания, не лечится отдыхом, не боится
+            SummonOnly   true — не строится, только призывается действием
 
-        Units:      Id, Name, Requires, Cost, Str (сила), Moves (ходы), CityDefPct (бонус обороны города, %),
-                    Sight (обзор), Sea (true — корабль)
-        Buildings:  Id, Name, Requires, Cost и любые из: Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct,
-                    Happy, DefPct, Calm, Faith, Upkeep (содержание золотом)
-        Actions:    Id, Name, Requires, Kind, Amount, CostFaith, CostGold, Cooldown (ходов до повтора)
-                    Kind — одно из:
-                      Heal     лечит всех ваших юнитов на Amount
-                      Harvest  +Amount пищи в каждом городе
-                      Calm     снимает Amount брожения во всех городах, прекращает беспорядки
-                      Gold     +Amount золота
-                      Science  +Amount к текущему исследованию
-                      Culture  +Amount к текущему институту
-                      Reveal   открывает карту в радиусе Amount клеток от столицы
-                      Smite    Amount урона вражеским юнитам на вашей территории
+        ЗДАНИЕ (Buildings)
+          Id, Name, Requires, Cost; доходы: Food Commerce ProdPct SciPct GoldPct Culture CulPct Happy DefPct Calm Faith Upkeep
+          Механики:
+            Power                     ресурс ветки за ход
+            UnitHeal                  лечит ваших юнитов в городе и рядом
+            Bombard + BombardRange    каждый ход бьёт одного врага рядом с городом
+            AuraDefPct + AuraRange    бонус обороны вашим юнитам вокруг города
 
-        Ветка с тем же Id, что у встроенной ("magic", "shamanism"), заменяет её.
+        ДЕЙСТВИЕ (Actions)
+          Id, Name, Requires, Kind, Amount, Cooldown (ходов до повтора)
+          CostPower / CostFaith / CostGold   цена
+          Caster    id юнита-исполнителя; пусто — действие империи (из окна «Ветки»)
+          Target    None, Tile (клетка) или City (ваш город)
+          Range     дальность от исполнителя; Radius — соседние клетки получают половину урона
+          Duration  сколько ходов длится эффект или живёт призванный юнит
+          Kind:
+            Heal      лечит всех ваших юнитов           Harvest  +Amount пищи в каждом городе
+            Calm      снимает брожение                  Gold / Science / Culture  +Amount
+            Reveal    открывает карту у столицы         Smite    урон врагам на вашей земле
+            HealArea  лечит вокруг исполнителя (нужен Caster)
+            Damage    урон по клетке (Target Tile)
+            Summon    призывает юнита Unit (Target None, Tile или City)
+            Bless     +Amount% к Stat (Food, Prod, Sci, Gold, Culture) в городе (Target City, Duration)
+            Forest    выращивает лес (Target Tile)
+            Shield    +Amount% обороны юнитам на клетке (Target Tile, Duration)
+            Teleport  переносит исполнителя со спутниками в ваш город (Target City, нужен Caster)
+
         Если в файле ошибка, сервер пропустит его и напишет в консоли, что именно не так.
-        Список всех id технологий и институтов: IH.Server --list-ids
+        Список всех id технологий, институтов и встроенных узлов: IH.Server --list-ids
         """;
 }

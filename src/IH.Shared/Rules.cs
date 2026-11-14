@@ -24,7 +24,7 @@ public enum WorkKind : byte { None, Farm, Mine, Cottage, Plantation, Quarry, Pas
 public sealed record ResDef(Resource Id, string Name, ResClass Class, int F, int P, int C, WorkKind Imp, string? Reveal = null);
 
 /// <summary>What a unit is able to cross; decides movement cost and passability.</summary>
-public readonly record struct Mover(bool Sea, bool Coast, bool Ocean);
+public readonly record struct Mover(bool Sea, bool Coast, bool Ocean, bool Fly = false);
 public enum UnitRole : byte { Military, Settler, Worker, Scout, Missionary }
 
 /// <summary>Static tile data; identical representation on server and client.</summary>
@@ -74,10 +74,16 @@ public struct TileData
 }
 
 public sealed record UnitDef(string Id, string Name, int Cost, int Str, int Moves, string? Tech,
-    UnitRole Role = UnitRole.Military, int Sight = 1, int CityDefPct = 0, bool Sea = false, Resource Needs = Resource.None);
+    UnitRole Role = UnitRole.Military, int Sight = 1, int CityDefPct = 0, bool Sea = false, Resource Needs = Resource.None)
+{
+    /// <summary>Special abilities; units of the base game have none.</summary>
+    public Rules.ModUnit X { get; init; } = Rules.ModUnit.None;
+}
 
 public sealed record BuildingDef(string Id, string Name, int Cost, string? Tech)
 {
+    /// <summary>Special mechanics of branch buildings (bombardment, auras, branch power).</summary>
+    public Rules.ModBuilding X { get; init; } = Rules.ModBuilding.None;
     public bool Coastal;
     public int Faith;
     public int Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct, Happy, DefPct, Upkeep, Calm, MaintCutPct;
@@ -97,6 +103,7 @@ public sealed record BuildingDef(string Id, string Name, int Cost, string? Tech)
         if (DefPct != 0) p.Add($"+{DefPct}% обороны");
         if (Calm != 0) p.Add($"-{Calm} брожения/ход");
         if (MaintCutPct != 0) p.Add($"-{MaintCutPct}% содержания города");
+        if (X.Extra().Length > 0) p.Add(X.Extra());
         if (Upkeep != 0) p.Add($"содержание {Upkeep}");
         return string.Join(", ", p);
     }
@@ -425,11 +432,12 @@ public static class Rules
 
     public const int EmbarkCost = 100; // boarding or landing ends the unit's move
 
-    public static Mover MoverFor(UnitDef d, Func<string?, bool> knows) => new(d.Sea, knows("sailing"), knows("astronomy"));
+    public static Mover MoverFor(UnitDef d, Func<string?, bool> knows) => new(d.Sea, knows("sailing"), knows("astronomy"), d.X.Flying);
 
     /// <summary>Step cost in half-points; -1 when the unit cannot enter the destination at all.</summary>
     public static int MoveCost(in TileData from, in TileData to, Mover m)
     {
+        if (m.Fly) return MovePoint; // spirits and familiars cross mountains and water alike
         if (to.Relief == Relief.Mountain) return -1;
         if (m.Sea) return to.IsWater || to.CityId >= 0 ? MovePoint : -1; // ships dock in coastal cities
         if (to.IsWater)
@@ -622,42 +630,136 @@ public static class Rules
         /// <summary>Ids that must be known first: technologies, social institutions or nodes of any branch.</summary>
         public string[] Requires = Array.Empty<string>();
         public Bonus Effect = new();
-        public void Sync(Wire w) { w.S(ref Id); w.S(ref Name); w.S(ref Description); w.I(ref Cost); w.SA(ref Requires); Effect.Sync(w); }
+        /// <summary>Branch power (mana, spirits...) this node yields every turn.</summary>
+        public int Power;
+        public void Sync(Wire w) { w.S(ref Id); w.S(ref Name); w.S(ref Description); w.I(ref Cost); w.SA(ref Requires); Effect.Sync(w); w.I(ref Power); }
     }
 
     public sealed class ModUnit : IWire
     {
+        public static readonly ModUnit None = new();
+
         public string Id = "", Name = "", Requires = "";
         public int Cost, Str, Moves = 1, CityDefPct, Sight = 1;
         public bool Sea;
+        // ---- abilities
+        /// <summary>Attacks from this many tiles away with RangedStr and takes no damage in return.</summary>
+        public int Ranged, RangedStr;
+        /// <summary>Heals friendly units on its own and adjacent tiles by this much every turn.</summary>
+        public int HealAura;
+        /// <summary>Heals itself every turn, even after moving or fighting.</summary>
+        public int Regen;
+        /// <summary>Enemy units next to it fight this many percent weaker.</summary>
+        public int FearPct;
+        /// <summary>Strength bonus while standing in a forest.</summary>
+        public int ForestPct;
+        /// <summary>Hit points regained after winning a melee fight.</summary>
+        public int Lifesteal;
+        /// <summary>Enemies see it only from an adjacent tile.</summary>
+        public bool Stealth;
+        /// <summary>Moves over any terrain, mountains and water included, at one move per tile.</summary>
+        public bool Flying;
+        /// <summary>An artificial being: no upkeep, never heals by resting, immune to fear.</summary>
+        public bool Construct;
+        /// <summary>Cannot be built in cities; appears only through a Summon action.</summary>
+        public bool SummonOnly;
+
         public void Sync(Wire w)
         {
             w.S(ref Id); w.S(ref Name); w.S(ref Requires); w.I(ref Cost); w.I(ref Str); w.I(ref Moves); w.I(ref CityDefPct); w.I(ref Sight); w.B(ref Sea);
+            w.I(ref Ranged); w.I(ref RangedStr); w.I(ref HealAura); w.I(ref Regen); w.I(ref FearPct); w.I(ref ForestPct); w.I(ref Lifesteal);
+            w.B(ref Stealth); w.B(ref Flying); w.B(ref Construct); w.B(ref SummonOnly);
+        }
+
+        public string Abilities()
+        {
+            var p = new List<string>();
+            if (Ranged > 0) p.Add($"дальний бой: сила {RangedStr}, дальность {Ranged}, без ответного урона");
+            if (HealAura > 0) p.Add($"лечит союзников рядом на {HealAura} за ход");
+            if (Regen > 0) p.Add($"регенерация {Regen} за ход");
+            if (FearPct > 0) p.Add($"страх: враги рядом слабее на {FearPct}%");
+            if (ForestPct > 0) p.Add($"+{ForestPct}% силы в лесу");
+            if (Lifesteal > 0) p.Add($"восстанавливает {Lifesteal} HP после победы");
+            if (Stealth) p.Add("скрытность: виден врагу только вплотную");
+            if (Flying) p.Add("полёт: любые клетки, горы и вода");
+            if (Construct) p.Add("конструкт: без содержания, не лечится отдыхом, не знает страха");
+            if (SummonOnly) p.Add("только призывается");
+            return string.Join("; ", p);
         }
     }
 
     public sealed class ModBuilding : IWire
     {
+        public static readonly ModBuilding None = new();
+
         public string Id = "", Name = "", Requires = "";
         public int Cost, Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct, Happy, DefPct, Upkeep, Calm, Faith;
+        // ---- mechanics
+        /// <summary>Branch power produced every turn.</summary>
+        public int Power;
+        /// <summary>Extra healing per turn for own units in the city and next to it.</summary>
+        public int UnitHeal;
+        /// <summary>Every turn deals this damage to one enemy unit within BombardRange of the city.</summary>
+        public int Bombard, BombardRange = 2;
+        /// <summary>Own units within AuraRange of the city defend this many percent better.</summary>
+        public int AuraDefPct, AuraRange = 2;
+
         public void Sync(Wire w)
         {
             w.S(ref Id); w.S(ref Name); w.S(ref Requires); w.I(ref Cost); w.I(ref Food); w.I(ref Commerce); w.I(ref ProdPct); w.I(ref SciPct);
             w.I(ref GoldPct); w.I(ref Culture); w.I(ref CulPct); w.I(ref Happy); w.I(ref DefPct); w.I(ref Upkeep); w.I(ref Calm); w.I(ref Faith);
+            w.I(ref Power); w.I(ref UnitHeal); w.I(ref Bombard); w.I(ref BombardRange); w.I(ref AuraDefPct); w.I(ref AuraRange);
+        }
+
+        public string Extra()
+        {
+            var p = new List<string>();
+            if (Power > 0) p.Add($"+{Power} силы ветки за ход");
+            if (UnitHeal > 0) p.Add($"лечит ваших юнитов в городе и рядом на {UnitHeal} за ход");
+            if (Bombard > 0) p.Add($"обстрел: {Bombard} урона врагу в {BombardRange} клетках от города каждый ход");
+            if (AuraDefPct > 0) p.Add($"+{AuraDefPct}% обороны вашим юнитам в {AuraRange} клетках от города");
+            return string.Join(", ", p);
         }
     }
 
-    /// <summary>An empire-wide action (rite, spell) paid with faith and/or gold, with a cooldown.</summary>
+    /// <summary>
+    /// A special action: a rite or a spell. It is either cast by the empire as a whole or by a caster unit
+    /// (then it is aimed from where that unit stands and spends the unit's move).
+    /// </summary>
     public sealed class ActionDef : IWire
     {
         public string Id = "", Name = "", Description = "", Requires = "";
-        /// <summary>Heal, Harvest, Calm, Gold, Science, Culture, Reveal or Smite; see <see cref="ActionKinds"/>.</summary>
+        /// <summary>One of <see cref="ActionKinds"/>.</summary>
         public string Kind = "";
         public int Amount, CostFaith, CostGold, Cooldown = 8;
+        /// <summary>Cost in the branch's own power (mana, spirits...).</summary>
+        public int CostPower;
+        /// <summary>Id of the unit type that performs the action; empty = the empire itself.</summary>
+        public string Caster = "";
+        /// <summary>"None", "Tile" or "City" (one of the player's own cities).</summary>
+        public string Target = "None";
+        /// <summary>How far from the caster (or, for empire actions on a tile, from any own city) the target may be.</summary>
+        public int Range = 1;
+        /// <summary>Damage: tiles around the target that take half damage.</summary>
+        public int Radius;
+        /// <summary>Turns a summoned unit, a shield or a blessing lasts; 0 = a permanent summon.</summary>
+        public int Duration;
+        /// <summary>Summon: id of the unit to create.</summary>
+        public string Unit = "";
+        /// <summary>Bless: Food, Prod, Sci, Gold or Culture.</summary>
+        public string Stat = "";
+
         public void Sync(Wire w)
         {
             w.S(ref Id); w.S(ref Name); w.S(ref Description); w.S(ref Requires); w.S(ref Kind); w.I(ref Amount); w.I(ref CostFaith); w.I(ref CostGold); w.I(ref Cooldown);
+            w.I(ref CostPower); w.S(ref Caster); w.S(ref Target); w.I(ref Range); w.I(ref Radius); w.I(ref Duration); w.S(ref Unit); w.S(ref Stat);
         }
+
+        private static string StatName(string stat) => stat switch
+        {
+            "Food" => "пищи", "Prod" => "производства", "Sci" => "науки", "Gold" => "золота", "Culture" => "культуры", _ => stat,
+        };
+
         public string Effect() => Kind switch
         {
             "Heal" => $"лечит всех ваших юнитов на {Amount} HP",
@@ -668,12 +770,29 @@ public static class Rules
             "Culture" => $"+{Amount} к текущему институту",
             "Reveal" => $"открывает карту в радиусе {Amount} клеток от столицы",
             "Smite" => $"наносит {Amount} урона вражеским юнитам на вашей территории",
+            "HealArea" => $"лечит ваших юнитов в {Range} клетках от заклинателя на {Amount} HP",
+            "Damage" => $"{Amount} урона врагам на выбранной клетке" + (Radius > 0 ? $" и {Amount / 2} — на соседних" : "") + $" (дальность {Range})",
+            "Summon" => $"призывает юнита «{Units.FirstOrDefault(u => u.Id == Unit)?.Name ?? Unit}»" + (Duration > 0 ? $" на {Duration} х." : ""),
+            "Bless" => $"+{Amount}% {StatName(Stat)} в выбранном городе на {Duration} х.",
+            "Forest" => $"выращивает лес на выбранной клетке (дальность {Range})",
+            "Shield" => $"+{Amount}% обороны вашим юнитам на выбранной клетке на {Duration} х. (дальность {Range})",
+            "Teleport" => "переносит заклинателя и юнитов с его клетки в выбранный ваш город",
             _ => Kind,
         };
-        public string Price() => string.Join(" + ", new[] { CostFaith > 0 ? $"{CostFaith} веры" : "", CostGold > 0 ? $"{CostGold} золота" : "" }.Where(x => x.Length > 0));
+
+        public string Price(string powerName = "силы") => string.Join(" + ", new[]
+        {
+            CostPower > 0 ? $"{CostPower} {powerName}" : "", CostFaith > 0 ? $"{CostFaith} веры" : "", CostGold > 0 ? $"{CostGold} золота" : "",
+        }.Where(x => x.Length > 0));
     }
 
-    public static readonly string[] ActionKinds = { "Heal", "Harvest", "Calm", "Gold", "Science", "Culture", "Reveal", "Smite" };
+    public static readonly string[] ActionKinds =
+    {
+        "Heal", "Harvest", "Calm", "Gold", "Science", "Culture", "Reveal", "Smite",
+        "HealArea", "Damage", "Summon", "Bless", "Forest", "Shield", "Teleport",
+    };
+    public static readonly string[] BlessStats = { "Food", "Prod", "Sci", "Gold", "Culture" };
+    public const int PowerCap = 60;
 
     /// <summary>
     /// A development branch defined by data (a JSON file in the host's mods folder), e.g. Magic or Shamanism.
@@ -684,6 +803,10 @@ public static class Rules
         public string Id = "", Name = "", Description = "";
         /// <summary>Points per turn = FromScience x science + FromCulture x culture + FromFaith x faith.</summary>
         public float FromScience, FromCulture, FromFaith;
+        /// <summary>Name of the branch's own spendable resource, e.g. "Мана".</summary>
+        public string PowerName = "Сила";
+        /// <summary>Format generation of the file; older copies of a built-in branch are ignored in favour of the built-in.</summary>
+        public int Version;
         public bool Enabled = true;
         public NodeDef[] Nodes = Array.Empty<NodeDef>();
         /// <summary>Content unlocked by the branch: each entry names in Requires the node (or tech/institution) that opens it.</summary>
@@ -693,7 +816,7 @@ public static class Rules
         public void Sync(Wire w)
         {
             w.S(ref Id); w.S(ref Name); w.S(ref Description); w.F(ref FromScience); w.F(ref FromCulture); w.F(ref FromFaith); w.A(ref Nodes);
-            w.A(ref Units); w.A(ref Buildings); w.A(ref Actions);
+            w.A(ref Units); w.A(ref Buildings); w.A(ref Actions); w.S(ref PowerName); w.I(ref Version);
         }
         public string Fuel()
         {
@@ -705,73 +828,84 @@ public static class Rules
         }
     }
 
-    private static NodeDef N(string id, string name, int cost, Bonus effect, params string[] requires)
-        => new() { Id = id, Name = name, Cost = cost, Effect = effect, Requires = requires };
+    public const int BuiltInVersion = 2;
+
+    private static NodeDef N(string id, string name, int cost, Bonus effect, int power, params string[] requires)
+        => new() { Id = id, Name = name, Cost = cost, Effect = effect, Power = power, Requires = requires };
 
     /// <summary>The two branches that ship with the game; they double as examples for writing your own.</summary>
     public static List<BranchDef> DefaultBranches() => new()
     {
+        // Shamanism: nature, spirits and support. Shamans heal, grow forests and call spirits; werebeasts thrive in woods.
         new BranchDef
         {
-            Id = "shamanism", Name = "Шаманство", FromFaith = 1f, FromCulture = 0.5f,
-            Description = "Духи, травы и видения. Растёт от веры и культуры; переплетается с ранними технологиями и институтами.",
+            Id = "shamanism", Name = "Шаманство", FromFaith = 1f, FromCulture = 0.5f, PowerName = "Духи", Version = BuiltInVersion,
+            Description = "Природа, духи и поддержка. Шаманы лечат войска, выращивают леса и призывают духов; оборотни сильны в лесу.",
             Nodes = new[]
             {
-                N("sh_spirits", "Духи предков", 30, new Bonus { Happy = 1 }),
-                N("sh_herbs", "Травничество", 50, new Bonus { Food = 1 }, "sh_spirits", "agriculture"),
-                N("sh_totems", "Тотемы", 60, new Bonus { CulPct = 10 }, "sh_spirits", "c_tribal"),
-                N("sh_trance", "Транс и видения", 110, new Bonus { FaithPct = 25 }, "sh_herbs", "sh_totems"),
-                N("sh_beast", "Звериный облик", 160, new Bonus { StrPct = 10 }, "sh_trance", "hunting"),
-                N("sh_weather", "Заклинание погоды", 260, new Bonus { Food = 1, ProdPct = 5 }, "sh_trance", "c_rites"),
-                N("sh_council", "Совет предков", 420, new Bonus { Calm = 2, Favor = 1 }, "sh_weather", "sh_beast"),
+                N("sh_spirits", "Духи предков", 30, new Bonus { Happy = 1 }, 1),
+                N("sh_herbs", "Травничество", 50, new Bonus { Food = 1 }, 0, "sh_spirits", "agriculture"),
+                N("sh_totems", "Тотемы", 60, new Bonus { CulPct = 10 }, 0, "sh_spirits", "c_tribal"),
+                N("sh_trance", "Транс и видения", 110, new Bonus { FaithPct = 25 }, 1, "sh_herbs", "sh_totems"),
+                N("sh_beast", "Звериный облик", 160, new Bonus { StrPct = 5 }, 0, "sh_trance", "hunting"),
+                N("sh_weather", "Заклинание погоды", 260, new Bonus { Food = 1, ProdPct = 5 }, 1, "sh_trance", "c_rites"),
+                N("sh_council", "Совет предков", 420, new Bonus { Calm = 2, Favor = 1 }, 2, "sh_weather", "sh_beast"),
             },
             Units = new[]
             {
-                new ModUnit { Id = "spirit_guard", Name = "Страж духов", Requires = "sh_totems", Cost = 30, Str = 3, Moves = 1, CityDefPct = 100 },
-                new ModUnit { Id = "werebeast", Name = "Оборотень", Requires = "sh_beast", Cost = 50, Str = 6, Moves = 2 },
+                new ModUnit { Id = "shaman", Name = "Шаман", Requires = "sh_spirits", Cost = 35, Str = 2, Moves = 2, HealAura = 10 },
+                new ModUnit { Id = "spirit", Name = "Дух-страж", Requires = "sh_trance", Cost = 40, Str = 4, Moves = 2, Flying = true, FearPct = 20, SummonOnly = true },
+                new ModUnit { Id = "werebeast", Name = "Оборотень", Requires = "sh_beast", Cost = 50, Str = 5, Moves = 2, ForestPct = 50, Regen = 10, Lifesteal = 15 },
             },
             Buildings = new[]
             {
-                new ModBuilding { Id = "herbalist", Name = "Хижина травника", Requires = "sh_herbs", Cost = 50, Food = 1, Happy = 1 },
-                new ModBuilding { Id = "totem_pole", Name = "Тотемный столб", Requires = "sh_totems", Cost = 35, Culture = 1, Faith = 1 },
+                new ModBuilding { Id = "herbalist", Name = "Хижина травника", Requires = "sh_herbs", Cost = 50, Food = 1, Happy = 1, UnitHeal = 20 },
+                new ModBuilding { Id = "totem_pole", Name = "Тотемный столб", Requires = "sh_totems", Cost = 35, Culture = 1, Faith = 1, Power = 1, AuraDefPct = 25, AuraRange = 2 },
+                new ModBuilding { Id = "stone_circle", Name = "Круг камней", Requires = "sh_trance", Cost = 90, Power = 2, Calm = 1 },
             },
             Actions = new[]
             {
-                new ActionDef { Id = "sh_soothe", Name = "Умиротворение духов", Requires = "sh_spirits", Kind = "Calm", Amount = 30, CostFaith = 25, Cooldown = 8 },
-                new ActionDef { Id = "sh_heal", Name = "Исцеляющий обряд", Requires = "sh_herbs", Kind = "Heal", Amount = 40, CostFaith = 25, Cooldown = 6 },
-                new ActionDef { Id = "sh_rain", Name = "Призыв дождя", Requires = "sh_weather", Kind = "Harvest", Amount = 12, CostFaith = 40, Cooldown = 10 },
+                new ActionDef { Id = "sh_soothe", Name = "Умиротворение духов", Requires = "sh_spirits", Kind = "Calm", Amount = 30, CostPower = 4, Cooldown = 8 },
+                new ActionDef { Id = "sh_heal", Name = "Исцеляющий обряд", Requires = "sh_herbs", Caster = "shaman", Kind = "HealArea", Amount = 40, Range = 2, CostPower = 3, Cooldown = 3 },
+                new ActionDef { Id = "sh_grow", Name = "Рост леса", Requires = "sh_totems", Caster = "shaman", Target = "Tile", Kind = "Forest", Range = 2, Amount = 1, CostPower = 4, Cooldown = 2 },
+                new ActionDef { Id = "sh_summon", Name = "Призыв духа", Requires = "sh_trance", Caster = "shaman", Target = "Tile", Kind = "Summon", Unit = "spirit", Range = 1, Amount = 1, Duration = 8, CostPower = 6, Cooldown = 5 },
+                new ActionDef { Id = "sh_rain", Name = "Призыв дождя", Requires = "sh_weather", Target = "City", Kind = "Bless", Stat = "Food", Amount = 50, Duration = 6, CostPower = 6, Cooldown = 10 },
             },
         },
+        // Magic: ranged damage, constructs and economy. Battle mages bombard from afar; towers shell besiegers.
         new BranchDef
         {
-            Id = "magic", Name = "Магия", FromScience = 0.4f, FromFaith = 0.6f,
-            Description = "От рун к высшей магии. Растёт от науки и веры; требует письменности, а алхимия и прорицание — знаний шаманов.",
+            Id = "magic", Name = "Магия", FromScience = 0.4f, FromFaith = 0.6f, PowerName = "Мана", Version = BuiltInVersion,
+            Description = "Дальний урон, конструкты и экономика. Боевые маги бьют издалека, башни обстреливают осаждающих, големы не требуют содержания.",
             Nodes = new[]
             {
-                N("mg_runes", "Руны", 40, new Bonus { SciPct = 5 }, "writing"),
-                N("mg_alchemy", "Алхимия", 80, new Bonus { GoldPct = 10 }, "mg_runes", "sh_herbs"),
-                N("mg_elements", "Стихийная магия", 120, new Bonus { ProdPct = 10 }, "mg_runes"),
-                N("mg_wards", "Обереги", 150, new Bonus { UpkeepCutPct = 10 }, "mg_runes", "masonry"),
-                N("mg_divination", "Прорицание", 220, new Bonus { SciPct = 10, Favor = 1 }, "mg_alchemy", "sh_trance"),
-                N("mg_enchant", "Зачарование оружия", 300, new Bonus { StrPct = 15 }, "mg_elements", "iron_working"),
-                N("mg_academy", "Академия магов", 520, new Bonus { SciPct = 15, CulPct = 10 }, "mg_divination", "mg_enchant", "education"),
-                N("mg_arcane", "Высшая магия", 900, new Bonus { SciPct = 10, GoldPct = 10, ProdPct = 10, Happy = 1 }, "mg_academy", "c_humanism"),
+                N("mg_runes", "Руны", 40, new Bonus { SciPct = 5 }, 1, "writing"),
+                N("mg_alchemy", "Алхимия", 80, new Bonus { GoldPct = 10 }, 0, "mg_runes", "sh_herbs"),
+                N("mg_elements", "Стихийная магия", 120, new Bonus { ProdPct = 5 }, 1, "mg_runes"),
+                N("mg_wards", "Обереги", 150, new Bonus { UpkeepCutPct = 10 }, 0, "mg_runes", "masonry"),
+                N("mg_divination", "Прорицание", 220, new Bonus { SciPct = 10, Favor = 1 }, 1, "mg_alchemy", "sh_trance"),
+                N("mg_enchant", "Зачарование оружия", 300, new Bonus { StrPct = 15 }, 0, "mg_elements", "iron_working"),
+                N("mg_academy", "Академия магов", 520, new Bonus { SciPct = 15, CulPct = 10 }, 2, "mg_divination", "mg_enchant", "education"),
+                N("mg_arcane", "Высшая магия", 900, new Bonus { SciPct = 10, GoldPct = 10, ProdPct = 10, Happy = 1 }, 3, "mg_academy", "c_humanism"),
             },
             Units = new[]
             {
-                new ModUnit { Id = "battle_mage", Name = "Боевой маг", Requires = "mg_elements", Cost = 60, Str = 7, Moves = 1 },
-                new ModUnit { Id = "golem", Name = "Голем", Requires = "mg_wards", Cost = 55, Str = 5, Moves = 1, CityDefPct = 75 },
+                new ModUnit { Id = "familiar", Name = "Фамильяр", Requires = "mg_runes", Cost = 30, Str = 1, Moves = 2, Sight = 2, Stealth = true, Flying = true },
+                new ModUnit { Id = "battle_mage", Name = "Боевой маг", Requires = "mg_elements", Cost = 60, Str = 3, Moves = 1, Ranged = 2, RangedStr = 7 },
+                new ModUnit { Id = "golem", Name = "Голем", Requires = "mg_wards", Cost = 55, Str = 6, Moves = 1, CityDefPct = 50, Construct = true },
             },
             Buildings = new[]
             {
-                new ModBuilding { Id = "mage_tower", Name = "Башня мага", Requires = "mg_runes", Cost = 80, SciPct = 15, Upkeep = 1 },
-                new ModBuilding { Id = "alchemy_lab", Name = "Алхимическая лаборатория", Requires = "mg_alchemy", Cost = 90, GoldPct = 15, Upkeep = 1 },
+                new ModBuilding { Id = "mage_tower", Name = "Башня мага", Requires = "mg_runes", Cost = 80, SciPct = 10, Power = 2, Bombard = 15, BombardRange = 2, Upkeep = 1 },
+                new ModBuilding { Id = "alchemy_lab", Name = "Алхимическая лаборатория", Requires = "mg_alchemy", Cost = 90, GoldPct = 15, Power = 1, Upkeep = 1 },
             },
             Actions = new[]
             {
-                new ActionDef { Id = "mg_transmute", Name = "Трансмутация", Requires = "mg_alchemy", Kind = "Gold", Amount = 60, CostFaith = 30, Cooldown = 8 },
-                new ActionDef { Id = "mg_firestorm", Name = "Огненный шторм", Requires = "mg_elements", Kind = "Smite", Amount = 30, CostFaith = 45, Cooldown = 10 },
-                new ActionDef { Id = "mg_insight", Name = "Прозрение", Requires = "mg_divination", Kind = "Reveal", Amount = 8, CostFaith = 40, Cooldown = 12 },
+                new ActionDef { Id = "mg_transmute", Name = "Трансмутация", Requires = "mg_alchemy", Kind = "Gold", Amount = 60, CostPower = 5, Cooldown = 8 },
+                new ActionDef { Id = "mg_fireball", Name = "Огненный шар", Requires = "mg_elements", Caster = "battle_mage", Target = "Tile", Kind = "Damage", Amount = 35, Range = 3, Radius = 1, CostPower = 5, Cooldown = 2 },
+                new ActionDef { Id = "mg_shield", Name = "Магический щит", Requires = "mg_wards", Caster = "battle_mage", Target = "Tile", Kind = "Shield", Amount = 50, Range = 2, Duration = 3, CostPower = 3, Cooldown = 2 },
+                new ActionDef { Id = "mg_teleport", Name = "Телепорт", Requires = "mg_divination", Caster = "battle_mage", Target = "City", Kind = "Teleport", Amount = 1, CostPower = 8, Cooldown = 6 },
+                new ActionDef { Id = "mg_insight", Name = "Прозрение", Requires = "mg_divination", Kind = "Reveal", Amount = 8, CostPower = 6, Cooldown = 12 },
             },
         },
     };
@@ -792,16 +926,19 @@ public static class Rules
         // built-in types keep their indices; branch content is appended
         Units = BaseUnits.Concat(list.SelectMany(b => b.Units).Select(u =>
             new UnitDef(u.Id, u.Name, u.Cost, u.Str, Math.Max(1, u.Moves), u.Requires.Length > 0 ? u.Requires : null,
-                UnitRole.Military, Math.Max(1, u.Sight), u.CityDefPct, u.Sea))).ToArray();
+                UnitRole.Military, Math.Max(1, u.Sight), u.CityDefPct, u.Sea) { X = u })).ToArray();
         Buildings = BaseBuildings.Concat(list.SelectMany(b => b.Buildings).Select(m =>
             new BuildingDef(m.Id, m.Name, m.Cost, m.Requires.Length > 0 ? m.Requires : null)
             {
                 Food = m.Food, Commerce = m.Commerce, ProdPct = m.ProdPct, SciPct = m.SciPct, GoldPct = m.GoldPct, Culture = m.Culture,
-                CulPct = m.CulPct, Happy = m.Happy, DefPct = m.DefPct, Upkeep = m.Upkeep, Calm = m.Calm, Faith = m.Faith,
+                CulPct = m.CulPct, Happy = m.Happy, DefPct = m.DefPct, Upkeep = m.Upkeep, Calm = m.Calm, Faith = m.Faith, X = m,
             })).ToArray();
     }
 
     public static ActionDef? Action(string? id) => Actions.FirstOrDefault(a => a.Id == id);
+    public static BranchDef? BranchOfAction(string actionId) => Branches.FirstOrDefault(b => b.Actions.Any(a => a.Id == actionId));
+    public static BranchDef? BranchOfBuilding(string buildingId) => Branches.FirstOrDefault(b => b.Buildings.Any(x => x.Id == buildingId));
+    public static bool IsBaseUnitId(string id) => BaseUnits.Any(u => u.Id == id);
     public static bool IsBaseContentId(string id) => BaseUnits.Any(u => u.Id == id) || BaseBuildings.Any(b => b.Id == id);
 
     /// <summary>What a requirement id opens besides its own bonus: units, buildings and actions.</summary>

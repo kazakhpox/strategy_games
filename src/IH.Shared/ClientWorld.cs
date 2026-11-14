@@ -105,6 +105,11 @@ public sealed class ClientWorld
             case EventKind.Proposal:
                 return $"«{PlayerName(e.A)}» предлагает: {(e.B == (int)ProposalKind.Peace ? "мир" : "открытые границы")}";
             case EventKind.Info: return e.S;
+            case EventKind.Ranged:
+                bool dead = e.S == "1";
+                if (e.C == MyId) return dead ? $"Наш обстрел уничтожил юнит «{PlayerName(e.D)}»" : null;
+                if (e.D == MyId) return dead ? $"Мы потеряли юнит под обстрелом «{PlayerName(e.C)}»" : $"«{PlayerName(e.C)}» обстреливает наши войска";
+                return null;
             case EventKind.NodeDone: return $"{Rules.BranchOf(e.S)?.Name ?? "Ветка"}: освоено — {Rules.Node(e.S)?.Name ?? e.S}";
             case EventKind.CivicDone: return $"Принят институт: {Rules.Civic(e.S)?.Name ?? e.S}";
             case EventKind.ReligionFounded: return $"«{PlayerName(e.A)}» основывает религию «{e.S}»";

@@ -61,10 +61,23 @@ public class ModTests
             Assert.Empty(nc.Nodes[0].Requires);                                                  // omitted fields get defaults
             Assert.Contains(log, l => l.Contains("Некромантия"));
 
-            // the exported examples are themselves loadable, and a same-id file replaces the built-in
+            // examples go to a subfolder that is not loaded, so they never shadow the built-ins
             ModLoader.Export(dir);
-            Assert.True(File.Exists(Path.Combine(dir, "magic.json")));
-            var magic = ModLoader.Parse(File.ReadAllText(Path.Combine(dir, "magic.json")));
+            Assert.True(File.Exists(Path.Combine(dir, "examples", "magic.json")));
+            Assert.False(File.Exists(Path.Combine(dir, "magic.json")));
+            Assert.Equal(3, ModLoader.Load(dir).Count);
+            var magic = ModLoader.Parse(File.ReadAllText(Path.Combine(dir, "examples", "magic.json")));
+            Assert.Empty(ModLoader.Validate(magic, Rules.DefaultBranches()));
+
+            // a copy exported by an older game (no Version) is ignored instead of hiding the new built-in content
+            var stale = ModLoader.Parse(File.ReadAllText(Path.Combine(dir, "examples", "magic.json")));
+            stale.Version = 0; stale.Name = "Старая магия";
+            File.WriteAllText(Path.Combine(dir, "magic.json"), ModLoader.ToJson(stale));
+            log.Clear();
+            Assert.Equal("Магия", ModLoader.Load(dir, log.Add).Single(b => b.Id == "magic").Name);
+            Assert.Contains(log, l => l.Contains("устаревшая"));
+
+            // a current copy with the same id replaces the built-in
             magic.Name = "Чародейство"; magic.Nodes[0].Cost = 7;
             File.WriteAllText(Path.Combine(dir, "magic.json"), ModLoader.ToJson(magic));
             loaded = ModLoader.Load(dir);
@@ -73,7 +86,7 @@ public class ModTests
             Assert.Equal(7, loaded.Single(b => b.Id == "magic").Nodes[0].Cost);
 
             // switching shamanism off also disables what depends on it, with an explanation
-            var sham = ModLoader.Parse(File.ReadAllText(Path.Combine(dir, "shamanism.json")));
+            var sham = ModLoader.Parse(File.ReadAllText(Path.Combine(dir, "examples", "shamanism.json")));
             sham.Enabled = false;
             File.WriteAllText(Path.Combine(dir, "shamanism.json"), ModLoader.ToJson(sham));
             log.Clear();
@@ -118,52 +131,44 @@ public class ModTests
         // locked until the node is learned
         Assert.NotNull(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:werebeast"));
         Assert.NotNull(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "b:mage_tower"));
-        Assert.Contains("Травничество", Cmd(g, 0, CmdType.Cast, s: "sh_heal"));
+        Assert.Contains("Алхимия", Cmd(g, 0, CmdType.Cast, 0, -1, 0, "mg_transmute"));
         p.Nodes.UnionWith(new[] { "sh_spirits", "sh_herbs", "sh_totems", "sh_trance", "sh_beast", "mg_runes", "mg_alchemy", "mg_elements" });
         Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "b:mage_tower"));
         Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, 1, 0, "u:werebeast"));
-        Assert.Equal(6, Rules.Units[Rules.UnitIndex("werebeast")].Str);
-        Assert.Equal("юнит Оборотень", Rules.OpenedBy("sh_beast"));
+        Assert.NotNull(Cmd(g, 0, CmdType.SetProduction, city.Id, 1, 0, "u:spirit"));        // summon-only
+        Assert.Contains("юнит Оборотень", Rules.OpenedBy("sh_beast"));
 
-        // a branch building works like any other
+        // a branch building works like any other and produces the branch's own power
         city.Buildings.Add("mage_tower");
         var plain = new Game(SaveGame.FromJson<GameState>(SaveGame.ToJson(g.S)));
         plain.CitiesOf(0).Single().Buildings.Remove("mage_tower");
         g.RefreshEconomy(p); plain.RefreshEconomy(plain.P(0));
         Assert.True(p.SciRate > plain.P(0).SciRate);
+        Assert.Equal(2 + 2, p.PowerRate["magic"]);                                           // runes 1 + elements 1 + tower 2
+        Assert.Equal(2, plain.P(0).PowerRate["magic"]);
+        Assert.Equal(2, p.PowerRate["shamanism"]);                                           // spirits 1 + trance 1
 
-        // actions: cost, effect, cooldown, and refusal when they would do nothing
-        p.Faith = 200;
-        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "sh_heal"));                              // nobody is wounded
-        Assert.Equal(200, p.Faith);
-        var warrior = g.UnitsOf(0).First(u => u.Def.Id == "warrior");
-        warrior.Hp = 30;
-        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "sh_heal"));
-        Assert.Equal(70, warrior.Hp);
-        Assert.Equal(175, p.Faith);
-        warrior.Hp = 30;
-        Assert.Contains("через", Cmd(g, 0, CmdType.Cast, s: "sh_heal"));                    // cooling down
-        int gold = p.Gold;
-        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "mg_transmute"));
+        // actions cost the branch's power, not faith
+        p.Faith = 500;
+        Assert.Contains("Мана", Cmd(g, 0, CmdType.Cast, 0, -1, 0, "mg_transmute"));
+        Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn);
+        Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn);
+        Assert.Equal(8, p.Power["magic"]);
+        int gold = p.Gold, faith = p.Faith;
+        Assert.Null(Cmd(g, 0, CmdType.Cast, 0, -1, 0, "mg_transmute"));
         Assert.Equal(gold + 60, p.Gold);
-        p.Faith = 10;
-        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "mg_firestorm"));                         // cannot afford
-        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "no_such_action"));
-
-        // the firestorm hits enemies standing on our land
-        p.Faith = 200;
-        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "mg_firestorm"));                         // no enemies around
-        g.Rel(0, 1).Met = true; g.Rel(0, 1).AtWar = true;
-        int land = g.Grid.Nb[city.Tile].First(t => g.S.Tiles[t].Passable);
-        var invader = g.AddUnit(1, Rules.UnitIndex("warrior"), land);
-        var weak = g.AddUnit(1, Rules.UnitIndex("warrior"), land); weak.Hp = 20;
-        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "mg_firestorm"));
-        Assert.Equal(70, invader.Hp);
-        Assert.False(g.S.Units.ContainsKey(weak.Id));
-        var view = g.BuildView(0).Me;
-        Assert.True(view.Cooldowns[Rules.Actions.ToList().FindIndex(a => a.Id == "mg_firestorm")] > 0);
-        for (int i = 0; i < 7; i++) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
-        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "sh_heal") is { } e && !e.Contains("Раненых") ? e : null);   // cooldown over
+        Assert.Equal(3, p.Power["magic"]);
+        Assert.Equal(faith, p.Faith);
+        p.Power["magic"] = 50;
+        Assert.Contains("через", Cmd(g, 0, CmdType.Cast, 0, -1, 0, "mg_transmute"));        // cooling down
+        Assert.NotNull(Cmd(g, 0, CmdType.Cast, 0, -1, 0, "no_such_action"));
+        var me = g.BuildView(0).Me;
+        Assert.Equal(50, me.Power[Rules.Branches.ToList().FindIndex(b => b.Id == "magic")]);
+        Assert.True(me.Cooldowns[Rules.Actions.ToList().FindIndex(a => a.Id == "mg_transmute")] > 0);
+        // power does not pile up without limit
+        p.Power["magic"] = Rules.PowerCap - 1;
+        Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn);
+        Assert.Equal(Rules.PowerCap, p.Power["magic"]);
     }
 
     [Theory]

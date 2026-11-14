@@ -72,16 +72,29 @@ public sealed partial class Game
             Culture = c.Culture, CultureRate = Math.Max(1, (int)Math.Round(c.CulRate)), Happy = c.Happy, Unhappy = c.Unhappy,
             Unrest = c.Unrest, DisorderTurns = c.DisorderTurns, Maint = (int)Math.Round(c.Maint + c.BuildingUpkeep),
             Queue = c.Queue.ToArray(), Buildings = c.Buildings.OrderBy(x => x).ToArray(), Worked = c.Worked.ToArray(),
+            Buffs = c.Buffs.Where(b => b.Until > S.Turn).Select(b => $"{b.Stat switch { "Food" => "пища", "Prod" => "производство", "Sci" => "наука", "Gold" => "золото", _ => "культура" }} +{b.Amount}% (ещё {b.Until - S.Turn} х.)").ToArray(),
             Pressure = c.Pressure.OrderByDescending(x => x.Value).SelectMany(x => new[] { x.Key, x.Value }).ToArray(),
         };
         return d;
     }
 
-    public static UnitDto ToDto(Unit u, bool own) => new()
+    public UnitDto ToDto(Unit u, bool own) => new()
     {
+        Expires = u.Expires > 0 ? Math.Max(1, u.Expires - S.Turn) : 0, Shield = u.ShieldUntil > S.Turn ? u.ShieldPct : 0,
         Id = u.Id, Owner = u.Owner, Type = u.Type, Tile = u.Tile, Hp = u.Hp, Moves = own ? u.Moves : 0,
         WorkTurns = own ? u.WorkTurns : 0, Goto = own ? u.Goto : -1, Work = (byte)u.Work, Fortified = u.Fortified,
     };
+
+    private bool Spotted(Unit hidden, int viewer)
+    {
+        foreach (int t in Grid.Range(hidden.Tile, 1))
+        {
+            if (S.Tiles[t].CityId >= 0 && S.Cities[S.Tiles[t].CityId].Owner == viewer) return true;
+            var here = At(t);
+            for (int i = 0; i < here.Count; i++) if (here[i].Owner == viewer) return true;
+        }
+        return false;
+    }
 
     public int Score(Player p)
     {
@@ -98,7 +111,12 @@ public sealed partial class Game
         var view = new PlayerView { Visible = UpdateVisibility(p) };
 
         foreach (var u in S.Units.Values)
-            if (view.Visible[u.Tile]) view.Units.Add(ToDto(u, u.Owner == pid));
+        {
+            if (!view.Visible[u.Tile]) continue;
+            // stealth: a hidden enemy is reported only to players who have something right next to it
+            if (u.Owner != pid && u.Def.X.Stealth && p.Alive && !Spotted(u, pid)) continue;
+            view.Units.Add(ToDto(u, u.Owner == pid));
+        }
 
         view.Players = S.Players.Select(o =>
         {
@@ -130,6 +148,8 @@ public sealed partial class Game
                 .Select(x => new ProposalDto { Id = x.Id, From = x.From, To = x.To, Kind = (byte)x.Kind }).ToArray(),
             Demo = Demographics(p),
             Nodes = p.Nodes.OrderBy(x => x).ToArray(),
+            Power = Rules.Branches.Select(b => p.Power.GetValueOrDefault(b.Id)).ToArray(),
+            PowerRate = Rules.Branches.Select(b => p.PowerRate.GetValueOrDefault(b.Id)).ToArray(),
             Cooldowns = Rules.Actions.Select(a => Math.Max(0, p.Cooldowns.GetValueOrDefault(a.Id) - S.Turn)).ToArray(),
             BranchCurrent = Rules.Branches.Select(b => p.BranchCurrent.GetValueOrDefault(b.Id) ?? "").ToArray(),
             BranchProgress = Rules.Branches.Select(b => p.BranchProgress.GetValueOrDefault(b.Id)).ToArray(),
