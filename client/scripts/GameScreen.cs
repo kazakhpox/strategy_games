@@ -34,6 +34,7 @@ public partial class GameScreen : Control
     private readonly HashSet<int> _skipped = new();
     private Win _win = Win.None;
     private int _cityId = -1, _lastTurn = -1, _confirmDisband = -1;
+    private bool _scrollToFrontier;
     private bool _advancePending, _appendQueue, _firstDelta = true;
     private double _toastUntil, _timerShownAt;
     private int _timerBase = -1;
@@ -310,6 +311,7 @@ public partial class GameScreen : Control
         }
         if (tile < 0 || Selected is not { } u || u.Owner != W.MyId) return;
         if (!W.MyTurn) { Toast("Сейчас не ваш ход", true); return; }
+        if (u.Moves <= 0) { Toast("У этого юнита не осталось очков движения в этом ходу", true); Sound.Play(Sfx.Id.Error); return; }
         Map.OrderMove(u, tile);
         Sound.Play(Sfx.Id.Move);
         _advancePending = true;
@@ -470,6 +472,8 @@ public partial class GameScreen : Control
     {
         _win = w == _win && !forceOpen ? Win.None : w;
         _windowScroll.ScrollVertical = 0;
+        _windowScroll.ScrollHorizontal = 0;
+        _scrollToFrontier = true;
         RebuildWindow();
     }
 
@@ -479,7 +483,7 @@ public partial class GameScreen : Control
         Map.Highlight = Array.Empty<int>();
         Map.Invalidate();
         if (_win == Win.None) return;
-        int scroll = _windowScroll.ScrollVertical;
+        int scroll = _windowScroll.ScrollVertical, scrollX = _windowScroll.ScrollHorizontal;
         Ui.Clear(_windowBody);
         switch (_win)
         {
@@ -489,6 +493,7 @@ public partial class GameScreen : Control
             case Win.Diplomacy: BuildDiplomacy(); break;
             case Win.Demographics: BuildDemographics(); break;
         }
+        if (!_scrollToFrontier || _win != Win.Science) _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollHorizontal, scrollX);
         _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollVertical, scroll);
     }
 
@@ -587,7 +592,7 @@ public partial class GameScreen : Control
             Option(builds, "b:" + bd.Id, bd.Name, bd.Cost, bd.Describe());
     }
 
-    private static string Unlocks(TechDef t)
+    internal static string Unlocks(TechDef t)
     {
         var parts = new List<string>();
         parts.AddRange(Rules.Units.Where(u => u.Tech == t.Id).Select(u => u.Name));
@@ -611,6 +616,7 @@ public partial class GameScreen : Control
                    $" · изучено технологий: {me.Known.Length + me.Future.Sum()}", 14));
         if (me.Future.Any(f => f > 0))
             Add(Ui.Lbl("Технологии будущего: " + string.Join(", ", me.Future.Select((lv, b) => $"{Rules.FutureBranchNames[b]} {lv}")), 13, Ui.Dim));
+        BuildTechTree();
         Heading("Доступно для изучения (дерево бесконечно)");
         foreach (var a in me.Available.OrderBy(a => a.Cost))
         {
@@ -627,48 +633,20 @@ public partial class GameScreen : Control
                 info.AddChild(Ui.Lbl($"Эффект низкой базы: −{100 - a.Cost * 100 / a.BaseCost}% (обычная цена {a.BaseCost})", 12, Ui.Good));
             Add(Ui.H(12, b, info));
         }
-        BuildTechTree();
     }
 
     private void BuildTechTree()
     {
-        var me = W.Me;
         Heading("Дерево технологий");
-        Add(Ui.Lbl("✔ изучено · ▶ изучается · светлые — доступны сейчас · серые — нужны предшественники (наведите курсор)", 12, Ui.Dim));
-        var known = new HashSet<string>(me.Known);
-        var available = me.Available.ToDictionary(a => a.Id);
-        var eras = Ui.H(10);
-        for (int era = 0; era < Rules.EraNames.Length; era++)
+        Add(Ui.Lbl("Слева направо — от ранних к поздним; линии ведут от нужных предшественников.\nЗелёные изучены, светлые доступны (нажмите), серые закрыты. ▼ — скидка догоняющего. Прокрутка — полосой внизу или Shift+колесо.", 12, Ui.Dim));
+        var graph = new TechGraph(W.Me, id => Net.SendCommand(CmdType.SetResearch, s: id));
+        Add(graph);
+        if (_scrollToFrontier)
         {
-            var col = Ui.V(3, Ui.Lbl(Rules.EraNames[era], 13, Ui.Gold));
-            foreach (var t in Rules.Techs.Where(t => t.Era == era))
-                col.AddChild(TechButton(t, known.Contains(t.Id), available.GetValueOrDefault(t.Id)));
-            eras.AddChild(col);
+            // on opening, jump to the part of the tree the player is working on
+            _scrollToFrontier = false;
+            _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollHorizontal, (int)graph.FrontierX);
         }
-        var future = Ui.V(3, Ui.Lbl("Будущее (бесконечно)", 13, Ui.Gold));
-        for (int b = 0; b < 4; b++)
-        {
-            var t = Rules.Tech(Rules.FutureId(b, me.Future[b] + 1))!;
-            future.AddChild(TechButton(t, false, available.GetValueOrDefault(t.Id)));
-        }
-        eras.AddChild(future);
-        Add(eras);
-    }
-
-    private Button TechButton(TechDef t, bool known, TechCostDto? avail)
-    {
-        bool current = W.Me.Research == t.Id;
-        string id = t.Id;
-        var b = Ui.Btn((known ? "✔ " : current ? "▶ " : "") + t.Name + (known ? "" : $"  {avail?.Cost ?? t.Cost}"),
-            () => Net.SendCommand(CmdType.SetResearch, s: id), size: 12);
-        b.Alignment = HorizontalAlignment.Left;
-        b.CustomMinimumSize = new Vector2(168, 0);
-        b.Disabled = known || avail == null;
-        string pre = t.Prereqs.Length == 0 ? "" : "\nТребует: " + string.Join(", ", t.Prereqs.Select(p => Rules.Tech(p)?.Name ?? p));
-        b.TooltipText = "Открывает: " + Unlocks(t) + pre;
-        if (known) b.AddThemeColorOverride("font_disabled_color", Ui.Good);
-        else if (current) b.AddThemeColorOverride("font_color", Ui.Science);
-        return b;
     }
 
     private void BuildEconomy()

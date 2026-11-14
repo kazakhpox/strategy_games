@@ -159,6 +159,26 @@ public class GameTests
     }
 
     [Fact]
+    public void Move_order_without_movement_left_is_refused_not_queued()
+    {
+        var g = New(2, 0);
+        var warrior = g.UnitsOf(0).First(u => u.Def.Id == "warrior");
+        int step = g.Grid.Nb[warrior.Tile].First(t => g.S.Tiles[t].Passable);
+        Assert.Null(Cmd(g, 0, CmdType.MoveUnit, warrior.Id, step));
+        Assert.Equal(0, warrior.Moves);
+        int next = g.Grid.Nb[warrior.Tile].First(t => g.S.Tiles[t].Passable);
+        Assert.NotNull(Cmd(g, 0, CmdType.MoveUnit, warrior.Id, next));      // spent: nothing is queued for next turn
+        Assert.Equal(-1, warrior.Goto);
+        Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn);
+        Assert.Equal(step, warrior.Tile);                                    // the unit did not move by itself
+        Assert.Equal(warrior.MaxMoves, warrior.Moves);
+        // a long route started with movement left still continues over several turns
+        int far = Enumerable.Range(0, g.Grid.Count).First(t => g.Grid.Distance(t, warrior.Tile) == 3 && g.PathFor(warrior, t) != null);
+        Assert.Null(Cmd(g, 0, CmdType.MoveUnit, warrior.Id, far));
+        Assert.Equal(far, warrior.Goto);
+    }
+
+    [Fact]
     public void Sequential_mode_enforces_turn_order()
     {
         var g = New(2, 1, simultaneous: false);

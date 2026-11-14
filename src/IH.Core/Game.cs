@@ -255,6 +255,8 @@ public sealed partial class Game
         var u = Own(p, unitId, out var err); if (u == null) return err;
         if (!Grid.Valid(target)) return "Неверная клетка";
         if (u.Tile == target) { u.Goto = -1; return null; }
+        // an order given with no movement left would silently run next turn and eat that turn's move
+        if (u.Moves <= 0) return "У юнита не осталось очков движения в этом ходу";
         if (PathFor(u, target) == null) return "Туда нет пути";
         u.Goto = target; u.Fortified = false; u.Work = WorkKind.None; u.WorkTurns = 0;
         ContinueGoto(u);
