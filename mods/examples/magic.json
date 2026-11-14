@@ -6,7 +6,15 @@
   "FromCulture": 0,
   "FromFaith": 0.6,
   "PowerName": "Мана",
-  "Version": 2,
+  "PowerResources": [
+    "Mercury",
+    "Gypsum",
+    "Silver",
+    "Diamonds",
+    "Amber",
+    "Jade"
+  ],
+  "Version": 3,
   "Enabled": true,
   "Nodes": [
     {
@@ -220,6 +228,7 @@
       "CityDefPct": 0,
       "Sight": 2,
       "Sea": false,
+      "Needs": "",
       "Ranged": 0,
       "RangedStr": 0,
       "HealAura": 0,
@@ -242,6 +251,7 @@
       "CityDefPct": 0,
       "Sight": 1,
       "Sea": false,
+      "Needs": "",
       "Ranged": 2,
       "RangedStr": 7,
       "HealAura": 0,
@@ -264,6 +274,7 @@
       "CityDefPct": 50,
       "Sight": 1,
       "Sea": false,
+      "Needs": "Stone",
       "Ranged": 0,
       "RangedStr": 0,
       "HealAura": 0,

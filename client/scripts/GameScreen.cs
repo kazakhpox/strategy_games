@@ -626,6 +626,11 @@ public partial class GameScreen : Control
         if (d.Buffs.Length > 0) Stat("Благословения", string.Join(", ", d.Buffs), Ui.Good);
         Stat("Религия", creed == null ? "нет" + (pressure.Length > 0 ? $" (давление: {pressure})" : "")
             : $"{creed.Name} — {Rules.Beliefs[creed.Belief].Name}: {Rules.Beliefs[creed.Belief].Effect.Describe()}" + (pressure.Length > 0 ? $" (давление: {pressure})" : ""));
+        if (W.Me.StateReligion != 0 && c.Religion != 0)
+        {
+            bool harmony = c.Religion == W.Me.StateReligion;
+            Stat("Вера и порядок", harmony ? "город одной веры со столицей: −1 брожения за ход" : "религиозная рознь со столицей: +2 брожения за ход", harmony ? Ui.Good : Ui.Bad);
+        }
         Stat("Постройки", d.Buildings.Length == 0 ? "нет" : string.Join(", ", d.Buildings.Select(b => Rules.Building(b)?.Name ?? b)));
         Add(grid);
 
@@ -676,9 +681,13 @@ public partial class GameScreen : Control
             col.AddChild(b);
         }
         bool coastal = CoastalCity(c);
-        var land = Rules.Units.Where(x => !x.Sea && x.Role != UnitRole.Missionary && !x.X.SummonOnly && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(8).Reverse();
-        var navy = Rules.Units.Where(x => x.Sea && coastal && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(4).Reverse();
-        foreach (var ud in land.Concat(navy))
+        var buildable = Rules.Units.Where(x => x.Role != UnitRole.Missionary && !x.X.SummonOnly && W.Knows(x.Tech) && HasRes(x.Needs) && (!x.Sea || coastal)).ToList();
+        // settlers, workers, scouts and branch specialists are always offered; of the regular troops only the best few,
+        // otherwise the list grows without end and obsolete units crowd it
+        var always = buildable.Where(x => x.Role != UnitRole.Military || x.X != Rules.ModUnit.None).OrderBy(x => x.Sea).ThenBy(x => x.Cost);
+        var land = buildable.Where(x => !x.Sea && x.Role == UnitRole.Military && x.X == Rules.ModUnit.None).OrderByDescending(x => x.Str).ThenByDescending(x => x.Cost).Take(5).Reverse();
+        var navy = buildable.Where(x => x.Sea && x.Role == UnitRole.Military).OrderByDescending(x => x.Str).Take(3).Reverse();
+        foreach (var ud in always.Concat(land).Concat(navy))
             Option(units, "u:" + ud.Id, ud.Sea ? "⚓ " + ud.Name : ud.Name, ud.Cost, ud.Role switch
             {
                 UnitRole.Settler => "Основывает новый город (город теряет 1 жителя)",
@@ -767,7 +776,7 @@ public partial class GameScreen : Control
         Add(Ui.Lbl($"Культура империи: +{me.CultureRate} за ход (её дают города: монументы, храмы, театры). Принято институтов: {me.Civics.Length + me.CivicLevel}.", 13));
         var total = Rules.CivicBonus(me.Civics, me.CivicLevel).Describe();
         Add(Ui.Lbl("Действующие бонусы: " + (total.Length > 0 ? total : "пока нет"), 13, Ui.Good));
-        Add(Ui.Lbl("Каждый институт даёт постоянный бонус всей империи. Нажмите на доступный узел, чтобы принять его.", 12, Ui.Dim));
+        Add(Ui.Lbl($"Каждый институт даёт постоянный бонус всей империи. Нажмите на доступный узел, чтобы принять его. Наука и институты подпитывают друг друга: каждая изученная технология добавляет {Rules.Inspiration * 100:0}% своей цены к текущему институту, и наоборот.", 12, Ui.Dim));
         var graph = TechGraph.ForCivics(me, id => Net.SendCommand(CmdType.SetCivic, s: id));
         Add(graph);
         if (_scrollToFrontier)
@@ -779,11 +788,14 @@ public partial class GameScreen : Control
         foreach (var c in Rules.AvailableCivics(me.Civics, me.CivicLevel).OrderBy(c => c.Cost))
         {
             string id = c.Id;
-            var b = Ui.Btn($"{(id == me.Civic ? "▶ " : "")}{c.Name} — {c.Cost} ({Turns(c.Cost - Math.Min(me.CivicProgress, c.Cost), me.CultureRate)})",
+            int cost = me.CivicCosts.FirstOrDefault(x => x.Id == id)?.Cost ?? c.Cost;
+            var b = Ui.Btn($"{(id == me.Civic ? "▶ " : "")}{c.Name} — {cost} ({Turns(cost - Math.Min(me.CivicProgress, cost), me.CultureRate)})",
                 () => Net.SendCommand(CmdType.SetCivic, s: id));
             b.Alignment = HorizontalAlignment.Left;
             b.CustomMinimumSize = new Vector2(380, 0);
-            Add(Ui.H(12, b, Ui.Lbl(c.Effect.Describe(), 12, Ui.Dim)));
+            var info = Ui.V(0, Ui.Lbl(c.Effect.Describe(), 12, Ui.Dim));
+            if (cost < c.Cost) info.AddChild(Ui.Lbl($"Эффект низкой базы: −{100 - cost * 100 / c.Cost}% (обычная цена {c.Cost})", 12, Ui.Good));
+            Add(Ui.H(12, b, info));
         }
     }
 
@@ -820,6 +832,11 @@ public partial class GameScreen : Control
         Add(Ui.Lbl($"Растёт от: {br.Fuel()} — сейчас +{rate} очк. за ход. Ветки идут параллельно с наукой и институтами и ничего у них не отнимают.", 13));
         int pool = _branchTab < me.Power.Length ? me.Power[_branchTab] : 0, poolRate = _branchTab < me.PowerRate.Length ? me.PowerRate[_branchTab] : 0;
         Add(Ui.Lbl($"{br.PowerName}: {pool} (+{poolRate} за ход, не больше {Rules.PowerCap}) — ресурс ветки для её действий; его дают узлы и здания ветки.", 14, Ui.Science));
+        if (br.PowerResources.Length > 0)
+        {
+            var have = br.PowerResources.Select(Rules.ParseResource).Where(r => r != Resource.None).ToList();
+            Add(Ui.Lbl("Ресурсы карты, питающие ветку (+1 за каждый подключённый): " + string.Join(", ", have.Select(r => (HasRes(r) ? "✔ " : "") + Rules.Res(r).Name)), 12, Ui.Dim));
+        }
         Add(Ui.Lbl(cur != null ? $"Сейчас осваивается: {cur.Name} ({progress}/{cur.Cost})" : $"Ничего не осваивается — очки копятся ({progress}).", 15, cur != null ? Ui.Gold : Ui.Bad));
         var total = Rules.NodeBonus(br.Nodes.Where(n => me.Nodes.Contains(n.Id)).Select(n => n.Id)).Describe();
         if (total.Length > 0) Add(Ui.Lbl("Уже даёт: " + total, 13, Ui.Good));
@@ -941,8 +958,8 @@ public partial class GameScreen : Control
         Line("«Логистический надрыв» (штраф лидера)", Cost(me.StrainCost), me.StrainCost > 0 ? Ui.Bad : null);
         Line("Итого за ход", Ui.Signed(me.GoldRate), me.GoldRate < 0 ? Ui.Bad : Ui.Gold);
         Line("В казне", me.Gold.ToString(), Ui.Gold);
-        Line("Вера", $"{me.Faith} ({Ui.Signed(me.FaithRate)} за ход) — святилища, храмы, соборы; тратится на мирные покупки в городах");
-        Line("Дипломатическое одобрение", $"{me.Favor} ({Ui.Signed(me.FavorRate)} за ход) — мир и открытые границы; тратится на голоса в конгрессе");
+        Line("Вера", $"{me.Faith} ({Ui.Signed(me.FaithRate)} за ход)");
+        Line("Дипломатическое одобрение", $"{me.Favor} ({Ui.Signed(me.FavorRate)} за ход)");
         Line("Роскошь", me.Luxuries == 0 ? "нет" : $"{me.Luxuries} вид(ов): +{me.Luxuries} довольства в каждом городе");
         var have = me.Resources.Select(r => Rules.Res((Resource)r)).ToList();
         Line("Подключённые ресурсы", have.Count == 0 ? "нет" : string.Join(", ", have.Select(r => r.Name)));
@@ -960,13 +977,23 @@ public partial class GameScreen : Control
         else if (me.Lag > 0.005f)
         {
             Add(Ui.Lbl($"Вы отстаёте от мира — действуют бонусы догоняющего ({me.Lag * 100:0}%).", 14, Ui.Good));
-            Add(Ui.Lbl("• Эффект низкой базы: технологии, уже открытые другими, стоят дешевле (см. окно науки)", 14));
+            Add(Ui.Lbl("• Эффект низкой базы: технологии, институты и узлы веток, уже открытые другими, стоят дешевле; ваши голоса в конгрессе весят больше", 14));
             Add(Ui.Lbl($"• Научное эхо от мирных контактов с развитыми державами: +{me.EchoBonus} науки за ход (больше при открытых границах)", 14));
         }
         else Add(Ui.Lbl("Вы идёте вровень с миром: ни штрафов лидера, ни бонусов догоняющего.", 14, Ui.Dim));
         if (me.Sprawl > 0.01f)
             Add(Ui.Lbl($"• Раздутая империя: городов заметно больше, чем у соседей — содержание дополнительно растёт (индекс {me.Sprawl:0.00})", 14, Ui.Gold));
 
+        Heading("Связи с миром");
+        Add(Ui.Lbl(me.TradeLuxuries > 0 ? $"• Торговля роскошью через открытые границы: +{me.TradeLuxuries} довольства в каждом городе (не больше {Rules.MaxTradeLuxuries})"
+            : "• Торговли роскошью нет: откройте границы с державой, у которой есть роскошь, которой нет у вас", 14, me.TradeLuxuries > 0 ? Ui.Good : Ui.Dim));
+        Add(Ui.Lbl(me.WarWeariness > 0 ? $"• Усталость от войны: +{me.WarWeariness} брожения за ход в каждом городе (войны дольше {Rules.WarWearinessAfter} ходов)"
+            : "• Усталости от войны нет", 14, me.WarWeariness > 0 ? Ui.Bad : Ui.Dim));
+        var state = me.Religions.FirstOrDefault(r => r.Id == me.StateReligion);
+        Add(Ui.Lbl(state == null ? "• Государственной религии нет (ею становится религия столицы)"
+            : $"• Государственная религия — «{state.Name}». Единоверцев среди известных держав: {me.Brethren} (+1 одобрения за каждого, сильнее научное эхо, ИИ охотнее идёт на мир и открытые границы)", 14,
+            me.Brethren > 0 ? Ui.Good : Ui.Dim));
+        Add(Ui.Btn("Демография и рейтинг держав (F9)", () => Toggle(Win.Demographics, true), size: 13));
         Heading("Города");
         var cities = new GridContainer { Columns = 7 };
         cities.AddThemeConstantOverride("h_separation", 20);

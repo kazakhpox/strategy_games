@@ -6,7 +6,15 @@
   "FromCulture": 0.5,
   "FromFaith": 1,
   "PowerName": "Духи",
-  "Version": 2,
+  "PowerResources": [
+    "Furs",
+    "Incense",
+    "Honey",
+    "Truffles",
+    "Deer",
+    "Ivory"
+  ],
+  "Version": 3,
   "Enabled": true,
   "Nodes": [
     {
@@ -193,6 +201,7 @@
       "CityDefPct": 0,
       "Sight": 1,
       "Sea": false,
+      "Needs": "",
       "Ranged": 0,
       "RangedStr": 0,
       "HealAura": 10,
@@ -215,6 +224,7 @@
       "CityDefPct": 0,
       "Sight": 1,
       "Sea": false,
+      "Needs": "",
       "Ranged": 0,
       "RangedStr": 0,
       "HealAura": 0,
@@ -237,6 +247,7 @@
       "CityDefPct": 0,
       "Sight": 1,
       "Sea": false,
+      "Needs": "",
       "Ranged": 0,
       "RangedStr": 0,
       "HealAura": 0,

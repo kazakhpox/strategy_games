@@ -45,8 +45,10 @@ public partial class TechGraph : Control
     public static TechGraph ForCivics(MeDto me, Action<string> adopt)
     {
         static TechDef Conv(Rules.CivicDef c) => new(c.Id, c.Name, c.Cost, c.Era, c.Prereqs);
+        // costs come from the server: a laggard gets institutions others already have at a discount
+        var sent = me.CivicCosts.ToDictionary(c => c.Id);
         var avail = Rules.AvailableCivics(me.Civics, me.CivicLevel)
-            .ToDictionary(c => c.Id, c => new TechCostDto { Id = c.Id, Cost = c.Cost, BaseCost = c.Cost });
+            .ToDictionary(c => c.Id, c => sent.GetValueOrDefault(c.Id) ?? new TechCostDto { Id = c.Id, Cost = c.Cost, BaseCost = c.Cost });
         return new TechGraph(Rules.Civics.Select(Conv).ToList(), new List<TechDef> { Conv(Rules.Civic($"cf_{me.CivicLevel + 1}")!) },
             new HashSet<string>(me.Civics), avail, me.Civic, me.CultureRate, me.CivicProgress, "культуры",
             id => Rules.Civic(id) is { } c ? Conv(c) : null, t => Rules.Civic(t.Id)?.Effect.Describe() ?? "", adopt);
@@ -60,8 +62,9 @@ public partial class TechGraph : Control
         var nodes = new HashSet<string>(me.Nodes);
         bool Met(string r) => Rules.Satisfied(r, me.Known, me.Future, me.Civics, me.CivicLevel, nodes);
         TechDef Conv(Rules.NodeDef n) => new(n.Id, n.Name, n.Cost, 0, n.Requires.Where(own.Contains).ToArray());
+        var sent = me.NodeCosts.ToDictionary(c => c.Id);
         var avail = b.Nodes.Where(n => !nodes.Contains(n.Id) && n.Requires.All(Met))
-            .ToDictionary(n => n.Id, n => new TechCostDto { Id = n.Id, Cost = n.Cost, BaseCost = n.Cost });
+            .ToDictionary(n => n.Id, n => sent.GetValueOrDefault(n.Id) ?? new TechCostDto { Id = n.Id, Cost = n.Cost, BaseCost = n.Cost });
         string Outside(TechDef t)
         {
             var missing = Rules.Node(t.Id)!.Requires.Where(r => !own.Contains(r) && !Met(r)).Select(Rules.RequirementName).ToList();
