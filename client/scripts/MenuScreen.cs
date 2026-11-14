@@ -39,13 +39,13 @@ public partial class MenuScreen : Control
         var center = new CenterContainer();
         center.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         AddChild(center);
-        var panel = Ui.Panel(20);
+        var panel = Ui.Panel(24, Ui.Col(0x10172A, 0.98f), Ui.PanelEdge, 12);
         panel.CustomMinimumSize = new Vector2(560, 0);
         center.AddChild(panel);
         var root = Ui.V(10);
         panel.AddChild(root);
 
-        root.AddChild(Ui.Lbl("INFINITE HORIZONS", 30, Ui.Gold));
+        root.AddChild(Ui.Lbl("INFINITE HORIZONS", 30, Ui.Gold, true));
         root.AddChild(Ui.Lbl("4X-стратегия с бесконечным развитием и системой «Анти-Сноуболл»", 13, Ui.Dim));
         root.AddChild(new HSeparator());
 
@@ -58,11 +58,11 @@ public partial class MenuScreen : Control
         _connMode.AddItem("Steam (через Spacewar, AppID 480)", 1);
         _lanBox = Ui.V(8,
             Row("Адрес сервера", _host), Row("Порт (UDP)", _port),
-            Ui.Btn("Подключиться", ConnectPressed, size: 16),
+            Ui.Btn("Подключиться", ConnectPressed, size: 16, variation: "Primary"),
             new HSeparator(),
             Ui.Lbl("Или станьте хостом — сервер запустится на этом компьютере:", 13, Ui.Dim),
             Row("Партия", _hostSave),
-            Ui.Btn("Создать сервер и подключиться", HostPressed, size: 16),
+            Ui.Btn("Создать сервер и подключиться", HostPressed, size: 16, variation: "Primary"),
             _hostInfo);
         var steamScroll = new ScrollContainer { CustomMinimumSize = new Vector2(0, 110) };
         steamScroll.AddChild(_steamGames);
@@ -76,7 +76,7 @@ public partial class MenuScreen : Control
             new HSeparator(),
             Ui.Lbl("Или станьте хостом — игра появится в списке у друзей, VPN и проброс портов не нужны:", 13, Ui.Dim),
             Row("Партия", _steamSave),
-            Ui.Btn("Создать игру в Steam", HostSteamPressed, size: 16),
+            Ui.Btn("Создать игру в Steam", HostSteamPressed, size: 16, variation: "Primary"),
             Ui.Lbl("Steam покажет, что вы играете в Spacewar — это тестовое приложение Valve, под которым работает сеть игры.", 12, Ui.Dim));
         _connectBox = Ui.V(8, Row("Ваше имя", _name), Row("Подключение", _connMode), new HSeparator(), _lanBox, _steamBox);
         root.AddChild(_connectBox);
@@ -104,10 +104,10 @@ public partial class MenuScreen : Control
             Ui.Lbl("Создать игру", 16, Ui.Gold),
             Row("Название", _gameName), Row("Карта", _mapSize), Row("Тип карты", _mapType), Row("Режим ходов", _mode),
             Row("Мест для людей", _humans), Row("Противников-ИИ", _ai), Row("Таймер хода (0 — нет)", _timer),
-            Ui.H(8, Ui.Btn("Создать", CreatePressed, size: 16), Ui.Btn("Отключиться", () => _main.Net.Disconnect())));
+            Ui.H(8, Ui.Btn("Создать", CreatePressed, size: 16, variation: "Primary"), Ui.Btn("Отключиться", () => _main.Net.Disconnect())));
         root.AddChild(_lobbyBox);
 
-        _startBtn = Ui.Btn("Начать игру", () => _main.Net.Send(MsgType.StartGame), size: 16);
+        _startBtn = Ui.Btn("Начать игру", () => _main.Net.Send(MsgType.StartGame), size: 16, variation: "Primary");
         _readyBtn = Ui.Btn("Готов", () =>
         {
             var room = _main.Net.Room;

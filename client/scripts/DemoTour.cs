@@ -145,7 +145,20 @@ public partial class DemoTour : Node
         game.Toggle(Win.Economy, true); await Shot("06_economy");
         game.Toggle(Win.Diplomacy, true); await Shot("07_diplomacy");
         game.Toggle(Win.Demographics, true); await Shot("08_demographics");
+        game.Toggle(Win.Help, true); await Shot("08b_help");
         game.Toggle(Win.None);
+        // the fight forecast, shown on two of our own units because the tour meets no enemy
+        var pair = w.Units.Values.Where(u => u.Owner == w.MyId && u.Def.Str > 0).OrderBy(u => u.Id).Take(2).ToList();
+        if (pair.Count == 2)
+        {
+            var (toDef, toAtt, win) = Rules.Duel(pair[0].Def.Str, pair[1].Def.Str * 1.25, pair[0].Hp, pair[1].Hp);
+            game.Map.Select(pair[0].Id);
+            game.Map.CenterOn(pair[0].Tile);
+            game.ShowOdds(pair[0], new ClientWorld.CombatOdds(pair[1], false, pair[0].Def.Str, pair[1].Def.Str * 1.25, toDef, toAtt, win,
+                new System.Collections.Generic.List<string>(), new System.Collections.Generic.List<string> { "холмы +25%" }));
+            await Shot("08c_odds");
+            game.ShowOdds(null, null);
+        }
         game.Map.Zoom = 0.5f; game.Map.ApplyCamera(); await Shot("09_lod_medium");
         game.Map.Zoom = 0.2f; game.Map.ApplyCamera(); await Shot("10_lod_far");
         GD.Print($"tour: done at turn {w.Turn}, ping {net.PingMs} ms");

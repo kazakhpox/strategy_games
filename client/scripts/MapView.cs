@@ -88,7 +88,6 @@ public partial class MapView : Node3D
     private sealed class CityNode
     {
         public Node3D Root = null!;
-        public Label3D Label = null!;
         public List<MeshInstance3D> Houses = new();
         public int Owner = -1, Pop = -1;
     }
@@ -201,7 +200,23 @@ public partial class MapView : Node3D
 
     public Vector2 ScreenPos(int tile) => _camera.UnprojectPosition(Center(tile) + new Vector3(0, 0.3f, 0));
 
+    /// <summary>Screen position of a point lifted above a tile; false if it is behind the camera.</summary>
+    public bool Project(int tile, float lift, out Vector2 screen)
+    {
+        var p = Center(tile) + new Vector3(0, lift, 0);
+        screen = _camera.UnprojectPosition(p);
+        return !_camera.IsPositionBehind(p);
+    }
+
     public void CenterOn(int tile) { Cam = Ground(tile); ApplyCamera(); }
+
+    /// <summary>Centres on a tile but leaves it shifted on screen: a positive X puts the tile left of the middle.</summary>
+    public void CenterOn(int tile, Vector2 screenShift)
+    {
+        float s = Distance * 0.0016f;
+        Cam = Ground(tile) + RightDir * screenShift.X * s - ForwardDir * screenShift.Y * s * 1.5f;
+        ApplyCamera();
+    }
 
     public bool OnScreen(int tile)
     {
@@ -383,7 +398,7 @@ public partial class MapView : Node3D
                 if (mb.Pressed) { _pressed = true; _dragging = mb.ButtonIndex == MouseButton.Middle; _pressPos = mb.Position; }
                 else
                 {
-                    if (_pressed && !_dragging && mb.ButtonIndex == MouseButton.Left) _screen.TileClicked(TileAt(mb.Position));
+                    if (_pressed && !_dragging && mb.ButtonIndex == MouseButton.Left && !_screen.BannerClicked(mb.Position)) _screen.TileClicked(TileAt(mb.Position));
                     _pressed = false; _dragging = false;
                 }
             }
@@ -647,8 +662,8 @@ public partial class MapView : Node3D
         n.Ring = new MeshInstance3D { Mesh = _ringMesh, MaterialOverride = _ringMat, Position = new Vector3(0, 0.06f, 0), Visible = false };
         n.Label = new Label3D
         {
-            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, FontSize = 44, OutlineSize = 12,
-            PixelSize = 0.0085f, Position = new Vector3(0, 1.25f, 0), RenderPriority = 2, OutlineRenderPriority = 1,
+            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, FontSize = 40, OutlineSize = 12,
+            PixelSize = 0.0075f, Position = new Vector3(0, 1.2f, 0), RenderPriority = 2, OutlineRenderPriority = 1,
         };
         n.Root.AddChild(n.Body); n.Root.AddChild(n.Head); n.Root.AddChild(n.Ring); n.Root.AddChild(n.Label);
         n.Root.Position = n.Pos;
@@ -707,7 +722,7 @@ public partial class MapView : Node3D
             }
             bool mine = u.Owner == W.MyId, selected = u.Id == SelectedUnit;
             v.Ring.Visible = selected;
-            v.Label.Visible = Lod >= 1 || selected;
+            v.Label.Visible = (Lod >= 1 && W.Tiles[u.Tile].CityId < 0) || selected;
             string text = u.Def.Name.Length > 3 && Lod < 2 ? u.Def.Name[..2] : u.Def.Name;
             if (count > 1) text += $" ×{count}";
             if (u.Hp < 100) text += $"  {u.Hp}%";
@@ -731,12 +746,6 @@ public partial class MapView : Node3D
             if (!_cities.TryGetValue(c.Id, out var n))
             {
                 n = new CityNode { Root = new Node3D { Position = Center(c.Tile) } };
-                n.Label = new Label3D
-                {
-                    Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, FontSize = 56, OutlineSize = 16,
-                    PixelSize = 0.0095f, Position = new Vector3(0, 2.75f, 0), RenderPriority = 4, OutlineRenderPriority = 3,
-                };
-                n.Root.AddChild(n.Label);
                 AddChild(n.Root);
                 _cities[c.Id] = n;
             }
@@ -775,11 +784,6 @@ public partial class MapView : Node3D
                 n.Root.AddChild(banner); n.Root.AddChild(flag);
                 n.Houses.Add(banner); n.Houses.Add(flag);
             }
-            var creed = W.Me.Religions.FirstOrDefault(r => r.Id == c.Religion);
-            n.Label.Text = (c.Capital ? "★ " : "") + c.Name + "  " + c.Pop + (creed != null ? $"  ✦{creed.Name[..creed.Name.IndexOf(' ')]}" : "");
-            n.Label.Modulate = c.Disorder ? Ui.Bad : Colors.White;
-            n.Label.OutlineModulate = OwnerColor(c.Owner).Darkened(0.55f);
-            n.Label.PixelSize = Lod >= 2 ? 0.0095f : Lod == 1 ? 0.016f : 0.03f;
         }
     }
 

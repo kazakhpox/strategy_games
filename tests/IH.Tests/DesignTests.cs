@@ -50,6 +50,39 @@ public class DesignTests
     }
 
     [Fact]
+    public void The_forecast_on_the_client_uses_the_numbers_the_server_fights_with()
+    {
+        var g = WithCities();
+        g.Rel(0, 1).AtWar = true;
+        var city = g.CitiesOf(0).Single();
+        int a = g.Grid.Range(city.Tile, 2).First(t => g.S.Tiles[t].Passable && g.S.Tiles[t].CityId < 0);
+        int b = g.Grid.Nb[a].First(t => g.S.Tiles[t].Passable && g.S.Tiles[t].CityId < 0);
+        g.S.Tiles[a].Forest = false; g.S.Tiles[a].Relief = Relief.Flat;
+        g.S.Tiles[b].Forest = true; g.S.Tiles[b].Relief = Relief.Hills;   // the defender sits well
+        var att = g.AddUnit(0, Rules.UnitIndex("warrior"), a);
+        var def = g.AddUnit(1, Rules.UnitIndex("archer"), b);
+        att.Hp = 80; def.Fortified = true;
+
+        // what player 0's client knows: a full snapshot through the same code the server sends with
+        var world = new ClientWorld(new GameStartMsg { W = g.S.W, H = g.S.H, YourId = 0, Settings = g.S.Settings, Branches = Rules.Branches.ToArray() });
+        world.Apply(new IH.Server.DeltaTracker().Build(g, 0, g.BuildView(0), new List<EventDto>(), -1)!);
+        var odds = world.EstimateCombat(world.Units[att.Id], b);
+        Assert.NotNull(odds);
+        Assert.Equal(def.Id, odds!.Defender.Id);
+        Assert.False(odds.Ranged);
+        Assert.Equal(g.FieldStr(att) * att.Hp / 100.0, odds.Attack, 6);
+        Assert.Equal(g.DefenseStr(def), odds.Defense, 6);
+        Assert.Equal(Rules.Duel(odds.Attack, odds.Defense, att.Hp, def.Hp).winChance, odds.Win, 6);
+        Assert.Contains("холмы +25%", odds.DefenseNotes);
+        Assert.Contains("укреплён +25%", odds.DefenseNotes);
+        // nothing to forecast against friends, empty tiles or the unit's own tile
+        Assert.Null(world.EstimateCombat(world.Units[att.Id], a));
+        g.Rel(0, 1).AtWar = false;
+        world.Apply(new IH.Server.DeltaTracker().Build(g, 0, g.BuildView(0), new List<EventDto>(), -1)!);
+        Assert.Null(world.EstimateCombat(world.Units[att.Id], b));
+    }
+
+    [Fact]
     public void World_milestones_go_to_whoever_gets_there_first()
     {
         var g = WithCities();

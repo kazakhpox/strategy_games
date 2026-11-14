@@ -17,6 +17,7 @@ public partial class Main : Control
     public override void _Ready()
     {
         _cfg.Load(CfgPath);
+        GetTree().Root.Theme = Ui.BuildTheme(); // one look for every control, popup and tooltip
         MouseFilter = MouseFilterEnum.Ignore; // the root must not swallow clicks meant for the map
         _menu = new MenuScreen(this);
         AddChild(_menu);

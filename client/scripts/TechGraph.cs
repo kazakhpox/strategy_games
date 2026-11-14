@@ -156,18 +156,23 @@ public partial class TechGraph : Control
         return $"{n.Tech.Name} — {Rules.EraName(n.Tech.Era)}\n{state}\nДаёт: {_unlocks(n.Tech)}{pre}{discount}";
     }
 
+    /// <summary>Colour of the tree this graph shows: science blue, culture violet, a branch's own colour.</summary>
+    public Color Accent = Ui.Science;
+    private readonly StyleBoxFlat _box = Ui.Box(Colors.White, Colors.White, 7, 0, 0);
+
     public override void _Draw()
     {
         var font = ThemeDB.FallbackFont;
-        var cGood = new Color(0.35f, 0.75f, 0.42f);
-        var cLocked = new Color(0.33f, 0.36f, 0.43f);
+        var bold = Ui.Bold;
+        var cGood = Ui.Col(0x4FA868);
+        var cLocked = Ui.Col(0x2F3A55);
 
         // column headers: how far along the tree each column is
         foreach (var group in _nodes.GroupBy(n => n.Col))
         {
             int era = group.Min(n => n.Tech.Era);
             string head = _header != null ? _header(era) : Rules.EraName(era);
-            if (head.Length > 0) DrawString(font, new Vector2(Pad + group.Key * (NodeW + GapX), Pad + 12), head, HorizontalAlignment.Left, NodeW, 12, Ui.Dim);
+            if (head.Length > 0) DrawString(bold, new Vector2(Pad + group.Key * (NodeW + GapX), Pad + 12), head.ToUpperInvariant(), HorizontalAlignment.Left, NodeW, 11, new Color(Ui.Dim, 0.8f));
         }
 
         // edges first, so the nodes sit on top of them
@@ -179,7 +184,7 @@ public partial class TechGraph : Control
                 var b = new Vector2(n.Rect.Position.X, n.Rect.GetCenter().Y);
                 bool lit = from.Known;
                 bool hot = _hover != null && (_hover == n || _hover == from);
-                var col = hot ? Ui.Gold : lit ? (n.Known ? cGood : new Color(0.55f, 0.8f, 0.6f)) : cLocked;
+                var col = hot ? Ui.Gold : lit ? (n.Known ? new Color(cGood, 0.75f) : new Color(Accent, 0.8f)) : cLocked;
                 var pts = new Vector2[17];
                 float bend = Math.Max(30, (b.X - a.X) * 0.5f);
                 for (int i = 0; i < pts.Length; i++)
@@ -187,22 +192,24 @@ public partial class TechGraph : Control
                     float t = i / (float)(pts.Length - 1);
                     pts[i] = a.BezierInterpolate(a + new Vector2(bend, 0), b - new Vector2(bend, 0), b, t);
                 }
-                DrawPolyline(pts, col, hot ? 3f : lit ? 2.2f : 1.4f, true);
+                DrawPolyline(pts, col, hot ? 3f : lit ? 2f : 1.4f, true);
             }
 
         foreach (var n in _nodes)
         {
             Color bg, edge, text;
-            if (n.Known) { bg = new Color(0.13f, 0.3f, 0.18f); edge = cGood; text = new Color(0.8f, 1f, 0.82f); }
-            else if (n.Current) { bg = new Color(0.12f, 0.24f, 0.42f); edge = Ui.Science; text = Colors.White; }
-            else if (n.Avail != null) { bg = new Color(0.2f, 0.22f, 0.3f); edge = new Color(0.85f, 0.85f, 0.9f); text = Colors.White; }
-            else { bg = new Color(0.1f, 0.11f, 0.15f); edge = cLocked; text = new Color(0.55f, 0.57f, 0.63f); }
-            if (n == _hover && n.Avail != null) bg = bg.Lightened(0.12f);
-            DrawRect(n.Rect, bg);
-            DrawRect(n.Rect, n == _hover ? Ui.Gold : edge, false, n.Current ? 2.5f : 1.5f);
+            if (n.Known) { bg = Ui.Col(0x15291D); edge = new Color(cGood, 0.7f); text = Ui.Col(0xBFE8C8); }
+            else if (n.Current) { bg = Accent.Darkened(0.68f); edge = Accent; text = Colors.White; }
+            else if (n.Avail != null) { bg = Ui.Col(0x27324F); edge = Ui.Col(0x8695BC); text = Colors.White; }
+            else { bg = Ui.Col(0x111725); edge = cLocked; text = Ui.Col(0x7C869C); }
+            if (n == _hover && n.Avail != null) bg = bg.Lightened(0.1f);
+            _box.BgColor = bg;
+            _box.BorderColor = n == _hover ? Ui.Gold : edge;
+            _box.SetBorderWidthAll(n.Current ? 2 : 1);
+            DrawStyleBox(_box, n.Rect);
 
             string name = (n.Known ? "✔ " : n.Current ? "▶ " : "") + n.Tech.Name;
-            DrawString(font, n.Rect.Position + new Vector2(8, 17), name, HorizontalAlignment.Left, NodeW - 14, 13, text);
+            DrawString(n.Known ? font : bold, n.Rect.Position + new Vector2(9, 18), name, HorizontalAlignment.Left, NodeW - 16, 13, text);
             string sub;
             if (n.Known) sub = "изучено";
             else
@@ -214,11 +221,12 @@ public partial class TechGraph : Control
                 if (n.Avail != null && n.Avail.Cost < n.Avail.BaseCost) sub += " ▼";
                 if (n.Avail == null && _note != null && _note(n.Tech) is { Length: > 0 } why) sub = why;
             }
-            DrawString(font, n.Rect.Position + new Vector2(8, 35), sub, HorizontalAlignment.Left, NodeW - 14, 11, n.Known ? cGood : Ui.Dim);
+            DrawString(font, n.Rect.Position + new Vector2(9, 35), sub, HorizontalAlignment.Left, NodeW - 16, 11,
+                n.Known ? new Color(cGood, 0.9f) : n.Avail != null && n.Avail.Cost < n.Avail.BaseCost ? Ui.Good : Ui.Dim);
             if (n.Current && n.Avail != null)
             {
                 float k = Math.Clamp(_progress / (float)Math.Max(1, n.Avail.Cost), 0, 1);
-                DrawRect(new Rect2(n.Rect.Position.X, n.Rect.End.Y - 3, NodeW * k, 3), Ui.Science);
+                DrawRect(new Rect2(n.Rect.Position.X + 6, n.Rect.End.Y - 4, (NodeW - 12) * k, 2), Accent);
             }
         }
     }

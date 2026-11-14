@@ -77,6 +77,87 @@ public sealed class ClientWorld
         }, 6000);
     }
 
+    /// <summary>What the player can foresee about an attack: the server's formulas fed with what this client sees.</summary>
+    public sealed record CombatOdds(UnitDto Defender, bool Ranged, double Attack, double Defense, int DmgToDefender, int DmgToAttacker,
+        double Win, List<string> AttackNotes, List<string> DefenseNotes);
+
+    private bool Hostile(int owner) => owner != MyId && Players.TryGetValue(owner, out var p) && p.AtWar;
+
+    /// <summary>
+    /// Forecast of the selected unit attacking a tile, or null if there is nobody to fight there. It is an estimate:
+    /// enemy institutions and the walls of enemy cities are not visible to the client, so the real numbers may differ.
+    /// </summary>
+    public CombatOdds? EstimateCombat(UnitDto att, int tile)
+    {
+        if (att.Owner != MyId || !Grid.Valid(tile) || Vis[tile] < 2 || tile == att.Tile) return null;
+        var foes = UnitsAt(tile).Where(u => Hostile(u.Owner)).ToList();
+        if (foes.Count == 0) return null;
+        bool ranged = att.Def.X.Ranged > 0 && Grid.Distance(att.Tile, tile) <= att.Def.X.Ranged;
+        if (!ranged && att.Def.Str <= 0) return null;
+
+        bool Embarked(UnitDto u) => !u.Def.Sea && !u.Def.X.Flying && Tiles[u.Tile].IsWater;
+        double Fear(UnitDto u, List<string> notes)
+        {
+            if (u.Def.X.Construct) return 1;
+            int fear = 0;
+            foreach (int t in Grid.Range(u.Tile, 1))
+                foreach (var o in UnitsAt(t))
+                    if (o.Def.X.FearPct > fear && (u.Owner == MyId ? Hostile(o.Owner) : o.Owner == MyId)) fear = o.Def.X.FearPct;
+            if (fear > 0) notes.Add($"страх −{Math.Min(80, fear)}%");
+            return 1 - Math.Min(80, fear) / 100.0;
+        }
+        double Field(UnitDto u, List<string> notes)
+        {
+            double s = u.Def.Str;
+            if (u.Owner == MyId)
+            {
+                var fx = Rules.CivicBonus(Me.Civics, Me.CivicLevel);
+                fx.Add(Rules.NodeBonus(Me.Nodes));
+                double mult = 1 + 0.05 * Me.Future[Rules.BranchNano] + fx.StrPct / 100.0;
+                if (mult > 1.001) notes.Add($"развитие +{(mult - 1) * 100:0}%");
+                s *= mult;
+            }
+            if (Tiles[u.Tile].Forest && u.Def.X.ForestPct != 0) { s *= 1 + u.Def.X.ForestPct / 100.0; notes.Add($"в лесу +{u.Def.X.ForestPct}%"); }
+            return s * Fear(u, notes);
+        }
+        double Defense(UnitDto d, List<string> notes)
+        {
+            if (Embarked(d)) { notes.Add("на транспорте −50%"); return d.Def.Str * 0.5 * d.Hp / 100.0; }
+            double mod = 1;
+            var t = Tiles[d.Tile];
+            if (t.Relief == Relief.Hills) { mod += 0.25; notes.Add("холмы +25%"); }
+            if (t.Forest) { mod += 0.25; notes.Add("лес +25%"); }
+            if (d.Fortified) { mod += 0.25; notes.Add("укреплён +25%"); }
+            if (CityAt(d.Tile) != null)
+            {
+                if (d.Def.CityDefPct > 0) { mod += d.Def.CityDefPct / 100.0; notes.Add($"в городе +{d.Def.CityDefPct}%"); }
+                notes.Add("стены города неизвестны");
+            }
+            if (d.Shield > 0) { mod += d.Shield / 100.0; notes.Add($"щит +{d.Shield}%"); }
+            return Field(d, notes) * mod * d.Hp / 100.0;
+        }
+
+        var none = new List<string>();
+        var def = foes.OrderByDescending(f => Defense(f, none)).ThenBy(f => f.Id).First();
+        var an = new List<string>();
+        var dn = new List<string>();
+        double dv = Math.Max(0.1, Defense(def, dn));
+        if (def.Hp < 100) dn.Add($"ранен: {def.Hp}%");
+        double field = Field(att, an);
+        if (att.Hp < 100) an.Add($"ранен: {att.Hp}%");
+        if (ranged)
+        {
+            double scale = att.Def.Str > 0 ? field / att.Def.Str : 1;
+            double ra = att.Def.X.RangedStr * scale * att.Hp / 100.0;
+            int dmg = Rules.RangedDamage(ra, dv);
+            return new CombatOdds(def, true, ra, dv, dmg, 0, dmg >= def.Hp ? 1 : 0, an, dn);
+        }
+        double a = field * att.Hp / 100.0;
+        if (Embarked(att)) { a *= 0.5; an.Add("с воды −50%"); }
+        var (toDef, toAtt, win) = Rules.Duel(a, dv, att.Hp, def.Hp);
+        return new CombatOdds(def, false, a, dv, toDef, toAtt, win, an, dn);
+    }
+
     public string PlayerName(int id) => Players.TryGetValue(id, out var p) ? p.Name : id < 0 ? "—" : $"Игрок {id}";
 
     /// <summary>Human-readable (Russian) text for a server event; null for purely visual events.</summary>
