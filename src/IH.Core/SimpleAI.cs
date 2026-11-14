@@ -28,6 +28,11 @@ public static class SimpleAI
                 .OrderBy(n => n.Cost).ThenBy(n => n.Id, StringComparer.Ordinal).FirstOrDefault();
             if (next != null) Do(g, p, CmdType.SetNode, s: next.Id);
         }
+        // rites and spells: use whatever currently does something, keeping a reserve for religion
+        foreach (var a in Rules.Actions)
+            if (p.Has(a.Requires) && p.Faith >= a.CostFaith + 40 && p.Gold >= a.CostGold + 30
+                && (a.Kind != "Heal" || g.UnitsOf(p.Id).Count(u => u.Hp <= 60) >= 2))
+                Do(g, p, CmdType.Cast, s: a.Id); // refused by the rules when it would have no effect
         Faith(g, p);
         // shortly before each congress, back ourselves with half of the accumulated favor
         if (g.S.Turn % Rules.CongressPeriod == Rules.CongressPeriod - 2 && p.Favor >= 10) Do(g, p, CmdType.Vote, p.Id, p.Favor / 2);

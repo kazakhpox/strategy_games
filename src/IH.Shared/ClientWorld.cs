@@ -57,7 +57,8 @@ public sealed class ClientWorld
 
     public IEnumerable<UnitDto> UnitsAt(int tile) => Units.Values.Where(u => u.Tile == tile);
     public CityDto? CityAt(int tile) => Tiles[tile].CityId >= 0 && Cities.TryGetValue(Tiles[tile].CityId, out var c) ? c : null;
-    public bool Knows(string? tech) => Rules.HasTech(Me.Known, Me.Future, tech);
+    /// <summary>Technology, social institution or custom branch node.</summary>
+    public bool Knows(string? tech) => tech == null || Rules.Satisfied(tech, Me.Known, Me.Future, Me.Civics, Me.CivicLevel, Me.Nodes);
 
     /// <summary>Local path prediction with the same cost rules the server uses, limited to what the player can see.</summary>
     public List<int>? PredictPath(UnitDto u, int target)

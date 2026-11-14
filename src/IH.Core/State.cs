@@ -99,7 +99,10 @@ public sealed class Player
     public int GoldRate;
 
     public long ScienceLevel => TechPoints + ResearchProgress;
-    public bool Has(string? tech) => Rules.HasTech(Known, Future, tech);
+    /// <summary>Technology, social institution or custom branch node.</summary>
+    public bool Has(string? tech) => tech == null || Rules.Satisfied(tech, Known, Future, Civics, CivicLevel, Nodes);
+    /// <summary>Action id -> first turn it may be used again.</summary>
+    public Dictionary<string, int> Cooldowns = new();
     public int TechCount => Known.Count + Future.Sum();
 }
 

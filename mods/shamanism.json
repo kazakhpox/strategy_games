@@ -172,5 +172,102 @@
         "Favor": 1
       }
     }
+  ],
+  "Units": [
+    {
+      "Id": "spirit_guard",
+      "Name": "Страж духов",
+      "Requires": "sh_totems",
+      "Cost": 30,
+      "Str": 3,
+      "Moves": 1,
+      "CityDefPct": 100,
+      "Sight": 1,
+      "Sea": false
+    },
+    {
+      "Id": "werebeast",
+      "Name": "Оборотень",
+      "Requires": "sh_beast",
+      "Cost": 50,
+      "Str": 6,
+      "Moves": 2,
+      "CityDefPct": 0,
+      "Sight": 1,
+      "Sea": false
+    }
+  ],
+  "Buildings": [
+    {
+      "Id": "herbalist",
+      "Name": "Хижина травника",
+      "Requires": "sh_herbs",
+      "Cost": 50,
+      "Food": 1,
+      "Commerce": 0,
+      "ProdPct": 0,
+      "SciPct": 0,
+      "GoldPct": 0,
+      "Culture": 0,
+      "CulPct": 0,
+      "Happy": 1,
+      "DefPct": 0,
+      "Upkeep": 0,
+      "Calm": 0,
+      "Faith": 0
+    },
+    {
+      "Id": "totem_pole",
+      "Name": "Тотемный столб",
+      "Requires": "sh_totems",
+      "Cost": 35,
+      "Food": 0,
+      "Commerce": 0,
+      "ProdPct": 0,
+      "SciPct": 0,
+      "GoldPct": 0,
+      "Culture": 1,
+      "CulPct": 0,
+      "Happy": 0,
+      "DefPct": 0,
+      "Upkeep": 0,
+      "Calm": 0,
+      "Faith": 1
+    }
+  ],
+  "Actions": [
+    {
+      "Id": "sh_soothe",
+      "Name": "Умиротворение духов",
+      "Description": "",
+      "Requires": "sh_spirits",
+      "Kind": "Calm",
+      "Amount": 30,
+      "CostFaith": 25,
+      "CostGold": 0,
+      "Cooldown": 8
+    },
+    {
+      "Id": "sh_heal",
+      "Name": "Исцеляющий обряд",
+      "Description": "",
+      "Requires": "sh_herbs",
+      "Kind": "Heal",
+      "Amount": 40,
+      "CostFaith": 25,
+      "CostGold": 0,
+      "Cooldown": 6
+    },
+    {
+      "Id": "sh_rain",
+      "Name": "Призыв дождя",
+      "Description": "",
+      "Requires": "sh_weather",
+      "Kind": "Harvest",
+      "Amount": 12,
+      "CostFaith": 40,
+      "CostGold": 0,
+      "Cooldown": 10
+    }
   ]
 }

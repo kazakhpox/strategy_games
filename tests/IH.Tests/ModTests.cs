@@ -109,6 +109,110 @@ public class ModTests
     }
 
     [Fact]
+    public void Branch_nodes_unlock_units_buildings_and_actions()
+    {
+        var g = GameTests.New(2, 0);
+        foreach (int pid in new[] { 0, 1 }) Assert.Null(Cmd(g, pid, CmdType.FoundCity, g.UnitsOf(pid).First(u => u.Def.Role == UnitRole.Settler).Id));
+        var p = g.P(0); var city = g.CitiesOf(0).Single();
+
+        // locked until the node is learned
+        Assert.NotNull(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:werebeast"));
+        Assert.NotNull(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "b:mage_tower"));
+        Assert.Contains("Травничество", Cmd(g, 0, CmdType.Cast, s: "sh_heal"));
+        p.Nodes.UnionWith(new[] { "sh_spirits", "sh_herbs", "sh_totems", "sh_trance", "sh_beast", "mg_runes", "mg_alchemy", "mg_elements" });
+        Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "b:mage_tower"));
+        Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, 1, 0, "u:werebeast"));
+        Assert.Equal(6, Rules.Units[Rules.UnitIndex("werebeast")].Str);
+        Assert.Equal("юнит Оборотень", Rules.OpenedBy("sh_beast"));
+
+        // a branch building works like any other
+        city.Buildings.Add("mage_tower");
+        var plain = new Game(SaveGame.FromJson<GameState>(SaveGame.ToJson(g.S)));
+        plain.CitiesOf(0).Single().Buildings.Remove("mage_tower");
+        g.RefreshEconomy(p); plain.RefreshEconomy(plain.P(0));
+        Assert.True(p.SciRate > plain.P(0).SciRate);
+
+        // actions: cost, effect, cooldown, and refusal when they would do nothing
+        p.Faith = 200;
+        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "sh_heal"));                              // nobody is wounded
+        Assert.Equal(200, p.Faith);
+        var warrior = g.UnitsOf(0).First(u => u.Def.Id == "warrior");
+        warrior.Hp = 30;
+        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "sh_heal"));
+        Assert.Equal(70, warrior.Hp);
+        Assert.Equal(175, p.Faith);
+        warrior.Hp = 30;
+        Assert.Contains("через", Cmd(g, 0, CmdType.Cast, s: "sh_heal"));                    // cooling down
+        int gold = p.Gold;
+        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "mg_transmute"));
+        Assert.Equal(gold + 60, p.Gold);
+        p.Faith = 10;
+        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "mg_firestorm"));                         // cannot afford
+        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "no_such_action"));
+
+        // the firestorm hits enemies standing on our land
+        p.Faith = 200;
+        Assert.NotNull(Cmd(g, 0, CmdType.Cast, s: "mg_firestorm"));                         // no enemies around
+        g.Rel(0, 1).Met = true; g.Rel(0, 1).AtWar = true;
+        int land = g.Grid.Nb[city.Tile].First(t => g.S.Tiles[t].Passable);
+        var invader = g.AddUnit(1, Rules.UnitIndex("warrior"), land);
+        var weak = g.AddUnit(1, Rules.UnitIndex("warrior"), land); weak.Hp = 20;
+        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "mg_firestorm"));
+        Assert.Equal(70, invader.Hp);
+        Assert.False(g.S.Units.ContainsKey(weak.Id));
+        var view = g.BuildView(0).Me;
+        Assert.True(view.Cooldowns[Rules.Actions.ToList().FindIndex(a => a.Id == "mg_firestorm")] > 0);
+        for (int i = 0; i < 7; i++) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
+        Assert.Null(Cmd(g, 0, CmdType.Cast, s: "sh_heal") is { } e && !e.Contains("Раненых") ? e : null);   // cooldown over
+    }
+
+    [Theory]
+    [InlineData("""{ "Id": "x", "Name": "X", "FromFaith": 1, "Nodes": [ { "Id": "xa", "Name": "A", "Cost": 5 } ], "Units": [ { "Id": "warrior", "Name": "W", "Cost": 5, "Str": 2 } ] }""", "уже занят")]
+    [InlineData("""{ "Id": "x", "Name": "X", "FromFaith": 1, "Nodes": [ { "Id": "xa", "Name": "A", "Cost": 5 } ], "Units": [ { "Id": "xu", "Name": "W", "Cost": 5, "Str": 0 } ] }""", "Str")]
+    [InlineData("""{ "Id": "x", "Name": "X", "FromFaith": 1, "Nodes": [ { "Id": "xa", "Name": "A", "Cost": 5 } ], "Buildings": [ { "Id": "xb", "Name": "B", "Cost": 5, "Requires": "xz" } ] }""", "«xz» не найдено")]
+    [InlineData("""{ "Id": "x", "Name": "X", "FromFaith": 1, "Nodes": [ { "Id": "xa", "Name": "A", "Cost": 5 } ], "Actions": [ { "Id": "xc", "Name": "C", "Kind": "Fireball", "Amount": 5, "CostFaith": 5 } ] }""", "Kind «Fireball» неизвестен")]
+    [InlineData("""{ "Id": "x", "Name": "X", "FromFaith": 1, "Nodes": [ { "Id": "xa", "Name": "A", "Cost": 5 } ], "Actions": [ { "Id": "xc", "Name": "C", "Kind": "Gold", "Amount": 5 } ] }""", "задайте цену")]
+    public void Broken_branch_content_is_reported(string json, string expected)
+    {
+        string dir = TempDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "bad.json"), json);
+            var log = new List<string>();
+            Assert.Equal(2, ModLoader.Load(dir, log.Add).Count);
+            Assert.Contains(log, l => l.Contains(expected));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void Custom_units_buildings_and_actions_load_from_a_file()
+    {
+        string dir = TempDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "necromancy.json"), """
+                { "Id": "necromancy", "Name": "Некромантия", "FromFaith": 1,
+                  "Nodes": [ { "Id": "nc_bones", "Name": "Кости", "Cost": 40 } ],
+                  "Units": [ { "Id": "skeleton", "Name": "Скелет", "Requires": "nc_bones", "Cost": 20, "Str": 3 } ],
+                  "Buildings": [ { "Id": "crypt", "Name": "Склеп", "Requires": "nc_bones", "Cost": 60, "Faith": 2, "Calm": 1 } ],
+                  "Actions": [ { "Id": "nc_raise", "Name": "Поднять павших", "Requires": "nc_bones", "Kind": "Heal", "Amount": 25, "CostFaith": 20, "Cooldown": 5 } ] }
+                """);
+            var nc = ModLoader.Load(dir).Single(b => b.Id == "necromancy");
+            Assert.Equal("Скелет", nc.Units.Single().Name);
+            Assert.Equal(1, nc.Units.Single().Moves);                       // default
+            Assert.Equal(2, nc.Buildings.Single().Faith);
+            Assert.Equal("Heal", nc.Actions.Single().Kind);
+            // and survive the trip to clients
+            var back = new Rules.BranchDef();
+            back.Sync(new Wire(Wire.ToBytes(nc), 0, Wire.ToBytes(nc).Length));
+            Assert.Equal("Склеп", back.Buildings.Single().Name);
+            Assert.Equal(5, back.Actions.Single().Cooldown);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
     public void Branches_advance_in_parallel_and_respect_requirements_from_other_trees()
     {
         var g = GameTests.New(2, 0);

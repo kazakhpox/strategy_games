@@ -205,6 +205,7 @@ public sealed partial class Game
                 if (missing.Count > 0) return "Сначала нужно: " + string.Join(", ", missing.Select(Rules.RequirementName));
                 p.BranchCurrent[branch.Id] = node.Id; return null;
             }
+            case CmdType.Cast: return CmdCast(p, c.S);
             case CmdType.FoundReligion: return CmdFoundReligion(p, c.A, c.B);
             case CmdType.Recruit: return CmdRecruit(p, c.A);
             case CmdType.Preach: return CmdPreach(p, c.A);
@@ -557,6 +558,67 @@ public sealed partial class Game
         if (amount <= 0 || p.Favor < amount) return "Недостаточно дипломатического одобрения";
         p.Favor -= amount;
         S.Votes[candidate] = S.Votes.GetValueOrDefault(candidate) + amount;
+        return null;
+    }
+
+    private string? CmdCast(Player p, string id)
+    {
+        var a = Rules.Action(id);
+        if (a == null) return "Нет такого действия";
+        if (!p.Has(a.Requires)) return "Сначала нужно: " + Rules.RequirementName(a.Requires);
+        int wait = p.Cooldowns.GetValueOrDefault(a.Id) - S.Turn;
+        if (wait > 0) return $"«{a.Name}» можно повторить через {wait} х.";
+        if (p.Faith < a.CostFaith) return $"Недостаточно веры (нужно {a.CostFaith})";
+        if (p.Gold < a.CostGold) return $"Недостаточно золота (нужно {a.CostGold})";
+        int affected = 0;
+        switch (a.Kind)
+        {
+            case "Heal":
+                foreach (var u in UnitsOf(p.Id)) if (u.Hp < 100) { u.Hp = Math.Min(100, u.Hp + a.Amount); affected++; }
+                if (affected == 0) return "Раненых юнитов нет";
+                break;
+            case "Harvest":
+                foreach (var c in CitiesOf(p.Id)) { c.Food += a.Amount; affected++; }
+                if (affected == 0) return "У вас нет городов";
+                break;
+            case "Calm":
+                foreach (var c in CitiesOf(p.Id))
+                    if (c.Unrest > 0 || c.DisorderTurns > 0) { c.Unrest = Math.Max(0, c.Unrest - a.Amount); c.DisorderTurns = 0; affected++; }
+                if (affected == 0) return "В городах и так спокойно";
+                break;
+            case "Gold": p.Gold += a.Amount; break;
+            case "Science": p.ResearchProgress += a.Amount; break;
+            case "Culture": p.CivicProgress += a.Amount; break;
+            case "Reveal":
+            {
+                var capital = CitiesOf(p.Id).FirstOrDefault(c => c.Capital);
+                if (capital == null) return "Для этого нужна столица";
+                foreach (int t in Grid.Range(capital.Tile, Math.Clamp(a.Amount, 1, 30)))
+                    if (p.KnownTiles[t] == 0) { p.KnownTiles[t] = Seen(p, S.Tiles[t]).Pack() | TileData.ExploredBit; affected++; }
+                if (affected == 0) return "Вокруг столицы всё уже разведано";
+                break;
+            }
+            case "Smite":
+            {
+                var victims = S.Units.Values.Where(u => u.Owner != p.Id && AtWar(p.Id, u.Owner) && S.Tiles[u.Tile].Owner == p.Id).ToList();
+                if (victims.Count == 0) return "На вашей территории нет вражеских юнитов";
+                foreach (var u in victims)
+                {
+                    u.Hp -= a.Amount;
+                    if (u.Hp > 0) continue;
+                    int owner = u.Owner;
+                    RemoveUnit(u);
+                    CheckDefeat(owner);
+                }
+                foreach (int owner in victims.Select(u => u.Owner).Distinct())
+                    Emit(EventKind.Info, s: $"«{p.Name}» обрушивает на ваши войска «{a.Name}»", only: owner);
+                break;
+            }
+            default: return "Неизвестный вид действия";
+        }
+        p.Faith -= a.CostFaith; p.Gold -= a.CostGold;
+        p.Cooldowns[a.Id] = S.Turn + Math.Max(1, a.Cooldown);
+        Emit(EventKind.Info, s: $"{a.Name}: {a.Effect()}", only: p.Id);
         return null;
     }
 

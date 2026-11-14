@@ -98,8 +98,9 @@ public class SharedTests
         Assert.Equal("Квантовые сети II", Rules.Tech("f2_2")!.Name);
         Assert.Null(Rules.Tech("f9_1"));
         Assert.Null(Rules.Tech("f1_0"));
-        Assert.All(Rules.Units, u => Assert.True(u.Tech == null || Rules.Tech(u.Tech) != null));
-        Assert.All(Rules.Buildings, b => Assert.True(b.Tech == null || Rules.Tech(b.Tech) != null));
+        // built-in content hangs off technologies; branch content hangs off branch nodes
+        Assert.All(Rules.Units, u => Assert.True(u.Tech == null || Rules.Tech(u.Tech) != null || Rules.Node(u.Tech) != null));
+        Assert.All(Rules.Buildings, b => Assert.True(b.Tech == null || Rules.Tech(b.Tech) != null || Rules.Node(b.Tech) != null));
         Assert.All(Rules.Techs, t => Assert.All(t.Prereqs, p => Assert.NotNull(Rules.Tech(p))));
     }
 }

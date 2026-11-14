@@ -745,6 +745,35 @@ public partial class GameScreen : Control
         if (total.Length > 0) Add(Ui.Lbl("Уже даёт: " + total, 13, Ui.Good));
         Add(TechGraph.ForBranch(me, _branchTab, id => Net.SendCommand(CmdType.SetNode, s: id)));
         Add(Ui.Lbl("Серый узел с подписью «нужно: …» ждёт технологию, институт или узел другой ветки. Наведите курсор, чтобы увидеть все требования и бонус.", 12, Ui.Dim));
+
+        if (br.Actions.Length > 0)
+        {
+            Heading("Действия");
+            Add(Ui.Lbl($"Обряды и заклинания действуют сразу на всю империю. У вас {me.Faith} веры и {me.Gold} золота.", 12, Ui.Dim));
+            foreach (var a in br.Actions)
+            {
+                string id = a.Id;
+                int idx = Rules.Actions.ToList().FindIndex(x => x.Id == a.Id);
+                int wait = idx >= 0 && idx < me.Cooldowns.Length ? me.Cooldowns[idx] : 0;
+                bool open = W.Knows(a.Requires);
+                var cast = Ui.Btn($"{a.Name} — {a.Price()}", () => Net.SendCommand(CmdType.Cast, s: id), a.Description, 14);
+                cast.CustomMinimumSize = new Vector2(300, 0);
+                cast.Alignment = HorizontalAlignment.Left;
+                cast.Disabled = !open || wait > 0 || me.Faith < a.CostFaith || me.Gold < a.CostGold;
+                string state = !open ? $"нужно: {Rules.RequirementName(a.Requires)}" : wait > 0 ? $"перезарядка: {wait} х." : $"повтор через {a.Cooldown} х.";
+                Add(Ui.H(12, cast, Ui.V(0, Ui.Lbl(a.Effect(), 13), Ui.Lbl(state, 12, !open ? Ui.Dim : wait > 0 ? Ui.Gold : Ui.Good))));
+            }
+        }
+        if (br.Units.Length + br.Buildings.Length > 0)
+        {
+            Heading("Юниты и здания ветки (строятся в городах)");
+            foreach (var u in br.Units)
+                Add(Ui.Lbl($"{(W.Knows(u.Requires) ? "✔" : "✘")} Юнит «{u.Name}» — сила {u.Str}, ходы {u.Moves}" + (u.CityDefPct > 0 ? $", +{u.CityDefPct}% в обороне города" : "")
+                           + $", цена {u.Cost}. Открывает: {Rules.RequirementName(u.Requires)}", 13, W.Knows(u.Requires) ? Colors.White : Ui.Dim));
+            foreach (var m in br.Buildings)
+                Add(Ui.Lbl($"{(W.Knows(m.Requires) ? "✔" : "✘")} Здание «{m.Name}» — {Rules.Building(m.Id)?.Describe()}, цена {m.Cost}. Открывает: {Rules.RequirementName(m.Requires)}", 13,
+                    W.Knows(m.Requires) ? Colors.White : Ui.Dim));
+        }
     }
 
     private int _relName, _relBelief;

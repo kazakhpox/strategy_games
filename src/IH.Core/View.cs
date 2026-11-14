@@ -130,6 +130,7 @@ public sealed partial class Game
                 .Select(x => new ProposalDto { Id = x.Id, From = x.From, To = x.To, Kind = (byte)x.Kind }).ToArray(),
             Demo = Demographics(p),
             Nodes = p.Nodes.OrderBy(x => x).ToArray(),
+            Cooldowns = Rules.Actions.Select(a => Math.Max(0, p.Cooldowns.GetValueOrDefault(a.Id) - S.Turn)).ToArray(),
             BranchCurrent = Rules.Branches.Select(b => p.BranchCurrent.GetValueOrDefault(b.Id) ?? "").ToArray(),
             BranchProgress = Rules.Branches.Select(b => p.BranchProgress.GetValueOrDefault(b.Id)).ToArray(),
             BranchRate = Rules.Branches.Select(b => (int)Math.Round(p.BranchRate.GetValueOrDefault(b.Id))).ToArray(),

@@ -198,5 +198,102 @@
         "Favor": 0
       }
     }
+  ],
+  "Units": [
+    {
+      "Id": "battle_mage",
+      "Name": "Боевой маг",
+      "Requires": "mg_elements",
+      "Cost": 60,
+      "Str": 7,
+      "Moves": 1,
+      "CityDefPct": 0,
+      "Sight": 1,
+      "Sea": false
+    },
+    {
+      "Id": "golem",
+      "Name": "Голем",
+      "Requires": "mg_wards",
+      "Cost": 55,
+      "Str": 5,
+      "Moves": 1,
+      "CityDefPct": 75,
+      "Sight": 1,
+      "Sea": false
+    }
+  ],
+  "Buildings": [
+    {
+      "Id": "mage_tower",
+      "Name": "Башня мага",
+      "Requires": "mg_runes",
+      "Cost": 80,
+      "Food": 0,
+      "Commerce": 0,
+      "ProdPct": 0,
+      "SciPct": 15,
+      "GoldPct": 0,
+      "Culture": 0,
+      "CulPct": 0,
+      "Happy": 0,
+      "DefPct": 0,
+      "Upkeep": 1,
+      "Calm": 0,
+      "Faith": 0
+    },
+    {
+      "Id": "alchemy_lab",
+      "Name": "Алхимическая лаборатория",
+      "Requires": "mg_alchemy",
+      "Cost": 90,
+      "Food": 0,
+      "Commerce": 0,
+      "ProdPct": 0,
+      "SciPct": 0,
+      "GoldPct": 15,
+      "Culture": 0,
+      "CulPct": 0,
+      "Happy": 0,
+      "DefPct": 0,
+      "Upkeep": 1,
+      "Calm": 0,
+      "Faith": 0
+    }
+  ],
+  "Actions": [
+    {
+      "Id": "mg_transmute",
+      "Name": "Трансмутация",
+      "Description": "",
+      "Requires": "mg_alchemy",
+      "Kind": "Gold",
+      "Amount": 60,
+      "CostFaith": 30,
+      "CostGold": 0,
+      "Cooldown": 8
+    },
+    {
+      "Id": "mg_firestorm",
+      "Name": "Огненный шторм",
+      "Description": "",
+      "Requires": "mg_elements",
+      "Kind": "Smite",
+      "Amount": 30,
+      "CostFaith": 45,
+      "CostGold": 0,
+      "Cooldown": 10
+    },
+    {
+      "Id": "mg_insight",
+      "Name": "Прозрение",
+      "Description": "",
+      "Requires": "mg_divination",
+      "Kind": "Reveal",
+      "Amount": 8,
+      "CostFaith": 40,
+      "CostGold": 0,
+      "Cooldown": 12
+    }
   ]
 }

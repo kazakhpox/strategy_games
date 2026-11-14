@@ -71,7 +71,8 @@ public partial class TechGraph : Control
         {
             var n = Rules.Node(t.Id)!;
             var outside = n.Requires.Where(r => !own.Contains(r)).Select(r => (Met(r) ? "✔ " : "✘ ") + Rules.RequirementName(r)).ToList();
-            return n.Effect.Describe() + (n.Description.Length > 0 ? "\n" + n.Description : "")
+            string opens = Rules.OpenedBy(n.Id);
+            return n.Effect.Describe() + (opens.Length > 0 ? "\nОткрывает: " + opens : "") + (n.Description.Length > 0 ? "\n" + n.Description : "")
                    + (outside.Count > 0 ? "\nИз других деревьев: " + string.Join(", ", outside) : "");
         }
         return new TechGraph(b.Nodes.Select(Conv).ToList(), new List<TechDef>(), nodes, avail,

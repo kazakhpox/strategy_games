@@ -56,6 +56,43 @@ public static class ModLoader
                 else if (!own.Contains(r) && !foreign.Contains(r) && Rules.Tech(r) == null && Rules.Civic(r) == null)
                     errors.Add($"узел {n.Id}: требование «{r}» не найдено среди технологий, институтов и узлов веток");
             }
+        // content opened by the branch
+        b.Units ??= Array.Empty<Rules.ModUnit>(); b.Buildings ??= Array.Empty<Rules.ModBuilding>(); b.Actions ??= Array.Empty<Rules.ActionDef>();
+        var taken = others.Where(o => o.Id != b.Id).SelectMany(o => o.Units.Select(u => u.Id).Concat(o.Buildings.Select(x => x.Id)).Concat(o.Actions.Select(x => x.Id))).ToHashSet();
+        bool Resolves(string r) => string.IsNullOrEmpty(r) || own.Contains(r) || foreign.Contains(r) || Rules.Tech(r) != null || Rules.Civic(r) != null;
+        void CheckId(string kind, string id, string name)
+        {
+            if (string.IsNullOrWhiteSpace(id)) { errors.Add($"{kind}: нет Id"); return; }
+            if (string.IsNullOrWhiteSpace(name)) errors.Add($"{kind} {id}: нет Name");
+            if (!taken.Add(id) || Rules.IsBaseContentId(id) || own.Contains(id)) errors.Add($"{kind} {id}: такой Id уже занят");
+        }
+        foreach (var u in b.Units)
+        {
+            u.Requires ??= "";
+            CheckId("юнит", u.Id, u.Name);
+            if (u.Cost <= 0) errors.Add($"юнит {u.Id}: Cost должен быть больше нуля");
+            if (u.Str <= 0 || u.Str > 500) errors.Add($"юнит {u.Id}: Str должен быть от 1 до 500");
+            if (u.Moves < 1 || u.Moves > 8) errors.Add($"юнит {u.Id}: Moves должен быть от 1 до 8");
+            if (!Resolves(u.Requires)) errors.Add($"юнит {u.Id}: требование «{u.Requires}» не найдено");
+        }
+        foreach (var m in b.Buildings)
+        {
+            m.Requires ??= "";
+            CheckId("здание", m.Id, m.Name);
+            if (m.Cost <= 0) errors.Add($"здание {m.Id}: Cost должен быть больше нуля");
+            if (!Resolves(m.Requires)) errors.Add($"здание {m.Id}: требование «{m.Requires}» не найдено");
+        }
+        foreach (var a in b.Actions)
+        {
+            a.Requires ??= ""; a.Description ??= "";
+            CheckId("действие", a.Id, a.Name);
+            if (!Rules.ActionKinds.Contains(a.Kind)) errors.Add($"действие {a.Id}: Kind «{a.Kind}» неизвестен; допустимы {string.Join(", ", Rules.ActionKinds)}");
+            if (a.Amount <= 0) errors.Add($"действие {a.Id}: Amount должен быть больше нуля");
+            if (a.CostFaith < 0 || a.CostGold < 0 || a.CostFaith + a.CostGold <= 0) errors.Add($"действие {a.Id}: задайте цену CostFaith и/или CostGold");
+            if (a.Cooldown < 1) errors.Add($"действие {a.Id}: Cooldown должен быть не меньше 1");
+            if (!Resolves(a.Requires)) errors.Add($"действие {a.Id}: требование «{a.Requires}» не найдено");
+        }
+        if (b.Units.Length + b.Buildings.Length + b.Actions.Length > 60) errors.Add("слишком много юнитов, зданий и действий в одной ветке (максимум 60)");
         if (errors.Count > 0) return errors;
 
         // a node must be reachable: no circular requirements inside the branch
@@ -158,6 +195,24 @@ public static class ModLoader
                       Calm            на сколько меньше брожения за ход
                       Food  Culture   пища и культура в каждом городе
                       Favor           дипломатическое одобрение за ход
+
+        Кроме узлов ветка может открывать юнитов, здания и действия (списки Units, Buildings, Actions).
+        У каждого в поле Requires — id узла (или технологии, института), который его открывает.
+
+        Units:      Id, Name, Requires, Cost, Str (сила), Moves (ходы), CityDefPct (бонус обороны города, %),
+                    Sight (обзор), Sea (true — корабль)
+        Buildings:  Id, Name, Requires, Cost и любые из: Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct,
+                    Happy, DefPct, Calm, Faith, Upkeep (содержание золотом)
+        Actions:    Id, Name, Requires, Kind, Amount, CostFaith, CostGold, Cooldown (ходов до повтора)
+                    Kind — одно из:
+                      Heal     лечит всех ваших юнитов на Amount
+                      Harvest  +Amount пищи в каждом городе
+                      Calm     снимает Amount брожения во всех городах, прекращает беспорядки
+                      Gold     +Amount золота
+                      Science  +Amount к текущему исследованию
+                      Culture  +Amount к текущему институту
+                      Reveal   открывает карту в радиусе Amount клеток от столицы
+                      Smite    Amount урона вражеским юнитам на вашей территории
 
         Ветка с тем же Id, что у встроенной ("magic", "shamanism"), заменяет её.
         Если в файле ошибка, сервер пропустит его и напишет в консоли, что именно не так.

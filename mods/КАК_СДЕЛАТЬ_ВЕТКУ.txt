@@ -31,6 +31,24 @@
               Food  Culture   пища и культура в каждом городе
               Favor           дипломатическое одобрение за ход
 
+Кроме узлов ветка может открывать юнитов, здания и действия (списки Units, Buildings, Actions).
+У каждого в поле Requires — id узла (или технологии, института), который его открывает.
+
+Units:      Id, Name, Requires, Cost, Str (сила), Moves (ходы), CityDefPct (бонус обороны города, %),
+            Sight (обзор), Sea (true — корабль)
+Buildings:  Id, Name, Requires, Cost и любые из: Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct,
+            Happy, DefPct, Calm, Faith, Upkeep (содержание золотом)
+Actions:    Id, Name, Requires, Kind, Amount, CostFaith, CostGold, Cooldown (ходов до повтора)
+            Kind — одно из:
+              Heal     лечит всех ваших юнитов на Amount
+              Harvest  +Amount пищи в каждом городе
+              Calm     снимает Amount брожения во всех городах, прекращает беспорядки
+              Gold     +Amount золота
+              Science  +Amount к текущему исследованию
+              Culture  +Amount к текущему институту
+              Reveal   открывает карту в радиусе Amount клеток от столицы
+              Smite    Amount урона вражеским юнитам на вашей территории
+
 Ветка с тем же Id, что у встроенной ("magic", "shamanism"), заменяет её.
 Если в файле ошибка, сервер пропустит его и напишет в консоли, что именно не так.
 Список всех id технологий и институтов: IH.Server --list-ids

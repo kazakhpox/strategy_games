@@ -21,6 +21,7 @@ public enum CmdType : byte
     Recruit,        // A=city: buy a missionary with faith
     Preach,         // A=unit: spend a missionary on the city it stands in
     SetNode,        // S=node id of a custom branch
+    Cast,           // S=action id
 }
 
 public enum EventKind : byte
@@ -240,6 +241,8 @@ public sealed class MeDto : IWire
     // custom branches; the three arrays are indexed like Rules.Branches
     public string[] Nodes = Array.Empty<string>(), BranchCurrent = Array.Empty<string>();
     public int[] BranchProgress = Array.Empty<int>(), BranchRate = Array.Empty<int>();
+    /// <summary>Turns until each action can be used again, indexed like Rules.Actions.</summary>
+    public int[] Cooldowns = Array.Empty<int>();
     public string Research = "";
     public string[] Known = Array.Empty<string>();
     public int[] Future = new int[4];
@@ -258,7 +261,7 @@ public sealed class MeDto : IWire
         w.IA(ref Resources); w.IA(ref Votes);
         w.S(ref Civic); w.SA(ref Civics); w.I(ref CivicProgress); w.I(ref CivicLevel); w.I(ref CultureRate); w.I(ref MyReligion);
         w.A(ref Religions);
-        w.SA(ref Nodes); w.SA(ref BranchCurrent); w.IA(ref BranchProgress); w.IA(ref BranchRate);
+        w.SA(ref Nodes); w.SA(ref BranchCurrent); w.IA(ref BranchProgress); w.IA(ref BranchRate); w.IA(ref Cooldowns);
     }
 }
 

@@ -145,7 +145,10 @@ public static class Rules
     }
 
     // ---------------------------------------------------------------- units
-    public static readonly UnitDef[] Units =
+    /// <summary>All unit types: the built-in ones followed by those defined by branches (mods).</summary>
+    public static UnitDef[] Units { get; private set; } = Array.Empty<UnitDef>();
+
+    private static readonly UnitDef[] BaseUnits =
     {
         new("settler", "Поселенец", 60, 0, 2, null, UnitRole.Settler),
         new("worker", "Рабочий", 35, 0, 2, null, UnitRole.Worker),
@@ -196,7 +199,9 @@ public static class Rules
     public static int UnitIndex(string id) => Array.FindIndex(Units, u => u.Id == id);
 
     // ------------------------------------------------------------ buildings
-    public static readonly BuildingDef[] Buildings =
+    public static BuildingDef[] Buildings { get; private set; } = Array.Empty<BuildingDef>();
+
+    private static readonly BuildingDef[] BaseBuildings =
     {
         new("palace", "Дворец", 0, null) { Commerce = 6, Culture = 2, Happy = 1, Calm = 2, Faith = 1 },
         new("shrine", "Святилище", 40, "mysticism") { Faith = 2 },
@@ -620,6 +625,56 @@ public static class Rules
         public void Sync(Wire w) { w.S(ref Id); w.S(ref Name); w.S(ref Description); w.I(ref Cost); w.SA(ref Requires); Effect.Sync(w); }
     }
 
+    public sealed class ModUnit : IWire
+    {
+        public string Id = "", Name = "", Requires = "";
+        public int Cost, Str, Moves = 1, CityDefPct, Sight = 1;
+        public bool Sea;
+        public void Sync(Wire w)
+        {
+            w.S(ref Id); w.S(ref Name); w.S(ref Requires); w.I(ref Cost); w.I(ref Str); w.I(ref Moves); w.I(ref CityDefPct); w.I(ref Sight); w.B(ref Sea);
+        }
+    }
+
+    public sealed class ModBuilding : IWire
+    {
+        public string Id = "", Name = "", Requires = "";
+        public int Cost, Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct, Happy, DefPct, Upkeep, Calm, Faith;
+        public void Sync(Wire w)
+        {
+            w.S(ref Id); w.S(ref Name); w.S(ref Requires); w.I(ref Cost); w.I(ref Food); w.I(ref Commerce); w.I(ref ProdPct); w.I(ref SciPct);
+            w.I(ref GoldPct); w.I(ref Culture); w.I(ref CulPct); w.I(ref Happy); w.I(ref DefPct); w.I(ref Upkeep); w.I(ref Calm); w.I(ref Faith);
+        }
+    }
+
+    /// <summary>An empire-wide action (rite, spell) paid with faith and/or gold, with a cooldown.</summary>
+    public sealed class ActionDef : IWire
+    {
+        public string Id = "", Name = "", Description = "", Requires = "";
+        /// <summary>Heal, Harvest, Calm, Gold, Science, Culture, Reveal or Smite; see <see cref="ActionKinds"/>.</summary>
+        public string Kind = "";
+        public int Amount, CostFaith, CostGold, Cooldown = 8;
+        public void Sync(Wire w)
+        {
+            w.S(ref Id); w.S(ref Name); w.S(ref Description); w.S(ref Requires); w.S(ref Kind); w.I(ref Amount); w.I(ref CostFaith); w.I(ref CostGold); w.I(ref Cooldown);
+        }
+        public string Effect() => Kind switch
+        {
+            "Heal" => $"лечит всех ваших юнитов на {Amount} HP",
+            "Harvest" => $"+{Amount} пищи в каждом городе",
+            "Calm" => $"снимает {Amount} брожения во всех городах и прекращает беспорядки",
+            "Gold" => $"+{Amount} золота",
+            "Science" => $"+{Amount} к текущему исследованию",
+            "Culture" => $"+{Amount} к текущему институту",
+            "Reveal" => $"открывает карту в радиусе {Amount} клеток от столицы",
+            "Smite" => $"наносит {Amount} урона вражеским юнитам на вашей территории",
+            _ => Kind,
+        };
+        public string Price() => string.Join(" + ", new[] { CostFaith > 0 ? $"{CostFaith} веры" : "", CostGold > 0 ? $"{CostGold} золота" : "" }.Where(x => x.Length > 0));
+    }
+
+    public static readonly string[] ActionKinds = { "Heal", "Harvest", "Calm", "Gold", "Science", "Culture", "Reveal", "Smite" };
+
     /// <summary>
     /// A development branch defined by data (a JSON file in the host's mods folder), e.g. Magic or Shamanism.
     /// It advances in parallel with science and institutions, fed by a mix of the empire's yields.
@@ -631,9 +686,14 @@ public static class Rules
         public float FromScience, FromCulture, FromFaith;
         public bool Enabled = true;
         public NodeDef[] Nodes = Array.Empty<NodeDef>();
+        /// <summary>Content unlocked by the branch: each entry names in Requires the node (or tech/institution) that opens it.</summary>
+        public ModUnit[] Units = Array.Empty<ModUnit>();
+        public ModBuilding[] Buildings = Array.Empty<ModBuilding>();
+        public ActionDef[] Actions = Array.Empty<ActionDef>();
         public void Sync(Wire w)
         {
             w.S(ref Id); w.S(ref Name); w.S(ref Description); w.F(ref FromScience); w.F(ref FromCulture); w.F(ref FromFaith); w.A(ref Nodes);
+            w.A(ref Units); w.A(ref Buildings); w.A(ref Actions);
         }
         public string Fuel()
         {
@@ -665,6 +725,22 @@ public static class Rules
                 N("sh_weather", "Заклинание погоды", 260, new Bonus { Food = 1, ProdPct = 5 }, "sh_trance", "c_rites"),
                 N("sh_council", "Совет предков", 420, new Bonus { Calm = 2, Favor = 1 }, "sh_weather", "sh_beast"),
             },
+            Units = new[]
+            {
+                new ModUnit { Id = "spirit_guard", Name = "Страж духов", Requires = "sh_totems", Cost = 30, Str = 3, Moves = 1, CityDefPct = 100 },
+                new ModUnit { Id = "werebeast", Name = "Оборотень", Requires = "sh_beast", Cost = 50, Str = 6, Moves = 2 },
+            },
+            Buildings = new[]
+            {
+                new ModBuilding { Id = "herbalist", Name = "Хижина травника", Requires = "sh_herbs", Cost = 50, Food = 1, Happy = 1 },
+                new ModBuilding { Id = "totem_pole", Name = "Тотемный столб", Requires = "sh_totems", Cost = 35, Culture = 1, Faith = 1 },
+            },
+            Actions = new[]
+            {
+                new ActionDef { Id = "sh_soothe", Name = "Умиротворение духов", Requires = "sh_spirits", Kind = "Calm", Amount = 30, CostFaith = 25, Cooldown = 8 },
+                new ActionDef { Id = "sh_heal", Name = "Исцеляющий обряд", Requires = "sh_herbs", Kind = "Heal", Amount = 40, CostFaith = 25, Cooldown = 6 },
+                new ActionDef { Id = "sh_rain", Name = "Призыв дождя", Requires = "sh_weather", Kind = "Harvest", Amount = 12, CostFaith = 40, Cooldown = 10 },
+            },
         },
         new BranchDef
         {
@@ -681,18 +757,61 @@ public static class Rules
                 N("mg_academy", "Академия магов", 520, new Bonus { SciPct = 15, CulPct = 10 }, "mg_divination", "mg_enchant", "education"),
                 N("mg_arcane", "Высшая магия", 900, new Bonus { SciPct = 10, GoldPct = 10, ProdPct = 10, Happy = 1 }, "mg_academy", "c_humanism"),
             },
+            Units = new[]
+            {
+                new ModUnit { Id = "battle_mage", Name = "Боевой маг", Requires = "mg_elements", Cost = 60, Str = 7, Moves = 1 },
+                new ModUnit { Id = "golem", Name = "Голем", Requires = "mg_wards", Cost = 55, Str = 5, Moves = 1, CityDefPct = 75 },
+            },
+            Buildings = new[]
+            {
+                new ModBuilding { Id = "mage_tower", Name = "Башня мага", Requires = "mg_runes", Cost = 80, SciPct = 15, Upkeep = 1 },
+                new ModBuilding { Id = "alchemy_lab", Name = "Алхимическая лаборатория", Requires = "mg_alchemy", Cost = 90, GoldPct = 15, Upkeep = 1 },
+            },
+            Actions = new[]
+            {
+                new ActionDef { Id = "mg_transmute", Name = "Трансмутация", Requires = "mg_alchemy", Kind = "Gold", Amount = 60, CostFaith = 30, Cooldown = 8 },
+                new ActionDef { Id = "mg_firestorm", Name = "Огненный шторм", Requires = "mg_elements", Kind = "Smite", Amount = 30, CostFaith = 45, Cooldown = 10 },
+                new ActionDef { Id = "mg_insight", Name = "Прозрение", Requires = "mg_divination", Kind = "Reveal", Amount = 8, CostFaith = 40, Cooldown = 12 },
+            },
         },
     };
 
     /// <summary>Branches in effect. The server sets them from its mods folder; clients receive them when a game starts.</summary>
-    public static IReadOnlyList<BranchDef> Branches { get; private set; } = DefaultBranches();
-    private static Dictionary<string, NodeDef> _nodes = DefaultBranches().SelectMany(b => b.Nodes).ToDictionary(n => n.Id);
+    public static IReadOnlyList<BranchDef> Branches { get; private set; } = Array.Empty<BranchDef>();
+    public static IReadOnlyList<ActionDef> Actions { get; private set; } = Array.Empty<ActionDef>();
+    private static Dictionary<string, NodeDef> _nodes = new();
+
+    static Rules() => SetBranches(DefaultBranches());
 
     public static void SetBranches(IEnumerable<BranchDef> branches)
     {
         var list = branches.Where(b => b.Enabled).ToList();
         _nodes = list.SelectMany(b => b.Nodes).ToDictionary(n => n.Id);
         Branches = list;
+        Actions = list.SelectMany(b => b.Actions).ToList();
+        // built-in types keep their indices; branch content is appended
+        Units = BaseUnits.Concat(list.SelectMany(b => b.Units).Select(u =>
+            new UnitDef(u.Id, u.Name, u.Cost, u.Str, Math.Max(1, u.Moves), u.Requires.Length > 0 ? u.Requires : null,
+                UnitRole.Military, Math.Max(1, u.Sight), u.CityDefPct, u.Sea))).ToArray();
+        Buildings = BaseBuildings.Concat(list.SelectMany(b => b.Buildings).Select(m =>
+            new BuildingDef(m.Id, m.Name, m.Cost, m.Requires.Length > 0 ? m.Requires : null)
+            {
+                Food = m.Food, Commerce = m.Commerce, ProdPct = m.ProdPct, SciPct = m.SciPct, GoldPct = m.GoldPct, Culture = m.Culture,
+                CulPct = m.CulPct, Happy = m.Happy, DefPct = m.DefPct, Upkeep = m.Upkeep, Calm = m.Calm, Faith = m.Faith,
+            })).ToArray();
+    }
+
+    public static ActionDef? Action(string? id) => Actions.FirstOrDefault(a => a.Id == id);
+    public static bool IsBaseContentId(string id) => BaseUnits.Any(u => u.Id == id) || BaseBuildings.Any(b => b.Id == id);
+
+    /// <summary>What a requirement id opens besides its own bonus: units, buildings and actions.</summary>
+    public static string OpenedBy(string id)
+    {
+        var parts = new List<string>();
+        parts.AddRange(Units.Where(u => u.Tech == id).Select(u => "юнит " + u.Name));
+        parts.AddRange(Buildings.Where(b => b.Tech == id).Select(b => "здание " + b.Name));
+        parts.AddRange(Actions.Where(a => a.Requires == id).Select(a => "действие «" + a.Name + "»"));
+        return string.Join(", ", parts);
     }
 
     public static NodeDef? Node(string? id) => id != null && _nodes.TryGetValue(id, out var n) ? n : null;
@@ -710,6 +829,7 @@ public static class Rules
     /// <summary>Whether a requirement of any kind is met.</summary>
     public static bool Satisfied(string id, ICollection<string> techs, int[] future, ICollection<string> civics, int civicLevel, ICollection<string> nodes)
     {
+        if (string.IsNullOrEmpty(id)) return true;
         if (_nodes.ContainsKey(id)) return nodes.Contains(id);
         if (Civic(id) != null) return HasCivic(civics, civicLevel, id);
         return HasTech(techs, future, id);
