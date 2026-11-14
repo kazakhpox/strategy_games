@@ -32,6 +32,8 @@ for (int i = 0; i < args.Length; i++)
             foreach (var t in Rules.Techs) Console.WriteLine($"  {t.Id,-20} {t.Name}");
             Console.WriteLine("Социальные институты:");
             foreach (var c in Rules.Civics) Console.WriteLine($"  {c.Id,-20} {c.Name}");
+            Console.WriteLine("Ресурсы карты (для Needs и PowerResources):");
+            foreach (var r in Rules.Resources.Skip(1)) Console.WriteLine($"  {r.Id,-20} {r.Name}");
             Console.WriteLine("Узлы встроенных веток:");
             foreach (var b in Rules.DefaultBranches()) foreach (var n in b.Nodes) Console.WriteLine($"  {n.Id,-20} {n.Name} ({b.Name})");
             return 0;

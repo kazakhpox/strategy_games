@@ -133,6 +133,7 @@ public static class SimpleAI
     public static bool Accepts(Game g, Player ai, Proposal pr)
     {
         var rel = g.Rel(pr.From, pr.To);
+        if (g.SameFaith(pr.From, pr.To)) return true; // one faith: peace and open borders come easily
         if (pr.Kind == ProposalKind.Peace)
             return g.S.Turn - rel.SinceTurn >= 8 || g.Power(ai.Id) < g.Power(pr.From);
         return !rel.AtWar && (ai.Id * 31 + pr.From * 17 + g.S.Settings.Seed) % 4 != 0;

@@ -103,6 +103,12 @@ public sealed class Player
     public int GoldRate;
 
     public long ScienceLevel => TechPoints + ResearchProgress;
+    /// <summary>Cost of everything adopted in the institutions tree and in custom branches.</summary>
+    public long CivicPoints, NodePoints;
+    /// <summary>Overall development the Anti-Snowball system compares: science first, the other trees at half weight.</summary>
+    public long DevLevel => ScienceLevel + (CivicPoints + NodePoints) / 2;
+    // derived links between systems
+    public int TradeLuxuries, WarWeariness, Brethren;
     /// <summary>Technology, social institution or custom branch node.</summary>
     public bool Has(string? tech) => tech == null || Rules.Satisfied(tech, Known, Future, Civics, CivicLevel, Nodes);
     /// <summary>Action id -> first turn it may be used again.</summary>

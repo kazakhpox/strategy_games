@@ -86,6 +86,9 @@ public sealed record BuildingDef(string Id, string Name, int Cost, string? Tech)
     public Rules.ModBuilding X { get; init; } = Rules.ModBuilding.None;
     public bool Coastal;
     public int Faith;
+    /// <summary>Synergy: the extra yields below apply while the empire has any of these resources connected.</summary>
+    public Resource[] With = Array.Empty<Resource>();
+    public int WithFood, WithProdPct, WithGoldPct, WithFaith;
     public int Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct, Happy, DefPct, Upkeep, Calm, MaintCutPct;
     public string Describe()
     {
@@ -103,6 +106,15 @@ public sealed record BuildingDef(string Id, string Name, int Cost, string? Tech)
         if (DefPct != 0) p.Add($"+{DefPct}% обороны");
         if (Calm != 0) p.Add($"-{Calm} брожения/ход");
         if (MaintCutPct != 0) p.Add($"-{MaintCutPct}% содержания города");
+        if (With.Length > 0)
+        {
+            var extra = new List<string>();
+            if (WithFood != 0) extra.Add($"+{WithFood} пищи");
+            if (WithProdPct != 0) extra.Add($"+{WithProdPct}% производства");
+            if (WithGoldPct != 0) extra.Add($"+{WithGoldPct}% золота");
+            if (WithFaith != 0) extra.Add($"+{WithFaith} веры");
+            p.Add($"ещё {string.Join(", ", extra)} при ресурсе: {string.Join(" / ", With.Select(r => Rules.Res(r).Name))}");
+        }
         if (X.Extra().Length > 0) p.Add(X.Extra());
         if (Upkeep != 0) p.Add($"содержание {Upkeep}");
         return string.Join(", ", p);
@@ -190,12 +202,13 @@ public static class Rules
     public static int UpgradeTarget(int type, Func<string?, bool> knows, Func<Resource, bool>? has = null)
     {
         var d = Units[type];
-        if (d.Role != UnitRole.Military) return -1;
+        // branch units (shamans, mages, golems...) are specialists: they neither upgrade nor serve as upgrade targets
+        if (d.Role != UnitRole.Military || d.X != ModUnit.None) return -1;
         int best = -1;
         for (int i = 0; i < Units.Length; i++)
         {
             var u = Units[i];
-            if (u.Role == UnitRole.Military && u.Sea == d.Sea && (d.Sea || u.Moves == d.Moves) && u.Str > d.Str && knows(u.Tech) && (u.Needs == Resource.None || has == null || has(u.Needs)) && (best < 0 || u.Str > Units[best].Str))
+            if (u.Role == UnitRole.Military && u.X == ModUnit.None && u.Sea == d.Sea && (d.Sea || u.Moves == d.Moves) && u.Str > d.Str && knows(u.Tech) && (u.Needs == Resource.None || has == null || has(u.Needs)) && (best < 0 || u.Str > Units[best].Str))
                 best = i;
         }
         return best;
@@ -213,21 +226,21 @@ public static class Rules
         new("palace", "Дворец", 0, null) { Commerce = 6, Culture = 2, Happy = 1, Calm = 2, Faith = 1 },
         new("shrine", "Святилище", 40, "mysticism") { Faith = 2 },
         new("monument", "Монумент", 30, "mysticism") { Culture = 2 },
-        new("granary", "Амбар", 60, "pottery") { Food = 2, Upkeep = 1 },
+        new("granary", "Амбар", 60, "pottery") { Food = 2, Upkeep = 1, With = new[] { Resource.Wheat, Resource.Rice, Resource.Maize }, WithFood = 1 },
         new("walls", "Стены", 50, "masonry") { DefPct = 50 },
         new("library", "Библиотека", 90, "writing") { SciPct = 25, Culture = 1, Upkeep = 1 },
-        new("temple", "Храм", 80, "priesthood") { Happy = 1, Culture = 1, Calm = 1, Upkeep = 1, Faith = 3 },
-        new("harbor", "Гавань", 100, "sailing") { Food = 1, GoldPct = 25, Upkeep = 1, Coastal = true },
-        new("market", "Рынок", 120, "currency") { GoldPct = 25, Happy = 1, Upkeep = 1 },
-        new("forge", "Кузница", 120, "metal_casting") { ProdPct = 25, Upkeep = 1 },
+        new("temple", "Храм", 80, "priesthood") { Happy = 1, Culture = 1, Calm = 1, Upkeep = 1, Faith = 3, With = new[] { Resource.Incense, Resource.Wine }, WithFaith = 2 },
+        new("harbor", "Гавань", 100, "sailing") { Food = 1, GoldPct = 25, Upkeep = 1, Coastal = true, With = new[] { Resource.Fish, Resource.Crabs, Resource.Whales, Resource.Pearls }, WithFood = 1 },
+        new("market", "Рынок", 120, "currency") { GoldPct = 25, Happy = 1, Upkeep = 1, With = new[] { Resource.Spices, Resource.Silk, Resource.Sugar, Resource.Cotton, Resource.Wine, Resource.Dyes }, WithGoldPct = 10 },
+        new("forge", "Кузница", 120, "metal_casting") { ProdPct = 25, Upkeep = 1, With = new[] { Resource.Iron, Resource.Copper }, WithProdPct = 10 },
         new("courthouse", "Суд", 120, "code_of_laws") { MaintCutPct = 50, Calm = 2, Upkeep = 1 },
         new("colosseum", "Колизей", 100, "construction") { Happy = 2, Upkeep = 1 },
         new("university", "Университет", 200, "education") { SciPct = 25, Culture = 2, Upkeep = 2 },
         new("bank", "Банк", 200, "banking") { GoldPct = 25, Upkeep = 1 },
         new("observatory", "Обсерватория", 150, "astronomy") { SciPct = 25, Upkeep = 1 },
         new("theatre", "Театр", 150, "printing_press") { CulPct = 50, Happy = 1, Upkeep = 1 },
-        new("factory", "Фабрика", 250, "assembly_line") { ProdPct = 25, Upkeep = 2 },
-        new("power_plant", "Электростанция", 280, "electricity") { ProdPct = 25, Upkeep = 2 },
+        new("factory", "Фабрика", 250, "assembly_line") { ProdPct = 25, Upkeep = 2, With = new[] { Resource.Coal }, WithProdPct = 10 },
+        new("power_plant", "Электростанция", 280, "electricity") { ProdPct = 25, Upkeep = 2, With = new[] { Resource.Coal, Resource.Oil, Resource.Uranium }, WithProdPct = 10 },
         new("broadcast", "Радиовышка", 220, "radio") { CulPct = 50, Happy = 1, Calm = 1, Upkeep = 2 },
         new("cathedral", "Собор", 180, "philosophy") { Faith = 4, Culture = 2, Happy = 1, Upkeep = 2 },
         new("stock_exchange", "Биржа", 260, "economics") { GoldPct = 25, Upkeep = 2 },
@@ -642,6 +655,8 @@ public static class Rules
         public string Id = "", Name = "", Requires = "";
         public int Cost, Str, Moves = 1, CityDefPct, Sight = 1;
         public bool Sea;
+        /// <summary>Name of a map resource the empire must have connected to build this unit (empty = none).</summary>
+        public string Needs = "";
         // ---- abilities
         /// <summary>Attacks from this many tiles away with RangedStr and takes no damage in return.</summary>
         public int Ranged, RangedStr;
@@ -668,7 +683,7 @@ public static class Rules
         {
             w.S(ref Id); w.S(ref Name); w.S(ref Requires); w.I(ref Cost); w.I(ref Str); w.I(ref Moves); w.I(ref CityDefPct); w.I(ref Sight); w.B(ref Sea);
             w.I(ref Ranged); w.I(ref RangedStr); w.I(ref HealAura); w.I(ref Regen); w.I(ref FearPct); w.I(ref ForestPct); w.I(ref Lifesteal);
-            w.B(ref Stealth); w.B(ref Flying); w.B(ref Construct); w.B(ref SummonOnly);
+            w.B(ref Stealth); w.B(ref Flying); w.B(ref Construct); w.B(ref SummonOnly); w.S(ref Needs);
         }
 
         public string Abilities()
@@ -805,6 +820,8 @@ public static class Rules
         public float FromScience, FromCulture, FromFaith;
         /// <summary>Name of the branch's own spendable resource, e.g. "Мана".</summary>
         public string PowerName = "Сила";
+        /// <summary>Map resources (names as in the Resource list) that each add +1 power per turn while connected.</summary>
+        public string[] PowerResources = Array.Empty<string>();
         /// <summary>Format generation of the file; older copies of a built-in branch are ignored in favour of the built-in.</summary>
         public int Version;
         public bool Enabled = true;
@@ -816,7 +833,7 @@ public static class Rules
         public void Sync(Wire w)
         {
             w.S(ref Id); w.S(ref Name); w.S(ref Description); w.F(ref FromScience); w.F(ref FromCulture); w.F(ref FromFaith); w.A(ref Nodes);
-            w.A(ref Units); w.A(ref Buildings); w.A(ref Actions); w.S(ref PowerName); w.I(ref Version);
+            w.A(ref Units); w.A(ref Buildings); w.A(ref Actions); w.S(ref PowerName); w.I(ref Version); w.SA(ref PowerResources);
         }
         public string Fuel()
         {
@@ -828,7 +845,10 @@ public static class Rules
         }
     }
 
-    public const int BuiltInVersion = 2;
+    public const int BuiltInVersion = 3;
+    /// <summary>Share of a finished technology's cost that spills into the current institution, and vice versa.</summary>
+    public const double Inspiration = 0.15;
+    public const int MaxTradeLuxuries = 3, WarWearinessAfter = 10;
 
     private static NodeDef N(string id, string name, int cost, Bonus effect, int power, params string[] requires)
         => new() { Id = id, Name = name, Cost = cost, Effect = effect, Power = power, Requires = requires };
@@ -840,6 +860,7 @@ public static class Rules
         new BranchDef
         {
             Id = "shamanism", Name = "Шаманство", FromFaith = 1f, FromCulture = 0.5f, PowerName = "Духи", Version = BuiltInVersion,
+            PowerResources = new[] { "Furs", "Incense", "Honey", "Truffles", "Deer", "Ivory" },
             Description = "Природа, духи и поддержка. Шаманы лечат войска, выращивают леса и призывают духов; оборотни сильны в лесу.",
             Nodes = new[]
             {
@@ -876,6 +897,7 @@ public static class Rules
         new BranchDef
         {
             Id = "magic", Name = "Магия", FromScience = 0.4f, FromFaith = 0.6f, PowerName = "Мана", Version = BuiltInVersion,
+            PowerResources = new[] { "Mercury", "Gypsum", "Silver", "Diamonds", "Amber", "Jade" },
             Description = "Дальний урон, конструкты и экономика. Боевые маги бьют издалека, башни обстреливают осаждающих, големы не требуют содержания.",
             Nodes = new[]
             {
@@ -892,7 +914,7 @@ public static class Rules
             {
                 new ModUnit { Id = "familiar", Name = "Фамильяр", Requires = "mg_runes", Cost = 30, Str = 1, Moves = 2, Sight = 2, Stealth = true, Flying = true },
                 new ModUnit { Id = "battle_mage", Name = "Боевой маг", Requires = "mg_elements", Cost = 60, Str = 3, Moves = 1, Ranged = 2, RangedStr = 7 },
-                new ModUnit { Id = "golem", Name = "Голем", Requires = "mg_wards", Cost = 55, Str = 6, Moves = 1, CityDefPct = 50, Construct = true },
+                new ModUnit { Id = "golem", Name = "Голем", Requires = "mg_wards", Cost = 55, Str = 6, Moves = 1, CityDefPct = 50, Construct = true, Needs = "Stone" },
             },
             Buildings = new[]
             {
@@ -926,7 +948,7 @@ public static class Rules
         // built-in types keep their indices; branch content is appended
         Units = BaseUnits.Concat(list.SelectMany(b => b.Units).Select(u =>
             new UnitDef(u.Id, u.Name, u.Cost, u.Str, Math.Max(1, u.Moves), u.Requires.Length > 0 ? u.Requires : null,
-                UnitRole.Military, Math.Max(1, u.Sight), u.CityDefPct, u.Sea) { X = u })).ToArray();
+                UnitRole.Military, Math.Max(1, u.Sight), u.CityDefPct, u.Sea, ParseResource(u.Needs)) { X = u })).ToArray();
         Buildings = BaseBuildings.Concat(list.SelectMany(b => b.Buildings).Select(m =>
             new BuildingDef(m.Id, m.Name, m.Cost, m.Requires.Length > 0 ? m.Requires : null)
             {
@@ -934,6 +956,8 @@ public static class Rules
                 CulPct = m.CulPct, Happy = m.Happy, DefPct = m.DefPct, Upkeep = m.Upkeep, Calm = m.Calm, Faith = m.Faith, X = m,
             })).ToArray();
     }
+
+    public static Resource ParseResource(string? name) => Enum.TryParse<Resource>(name, true, out var r) ? r : Resource.None;
 
     public static ActionDef? Action(string? id) => Actions.FirstOrDefault(a => a.Id == id);
     public static BranchDef? BranchOfAction(string actionId) => Branches.FirstOrDefault(b => b.Actions.Any(a => a.Id == actionId));

@@ -64,6 +64,19 @@ public class NetworkTests
         }
     }
 
+    /// <summary>Pumps until the condition holds; fixed sleeps are too fragile on a busy machine.</summary>
+    private static bool Until(GameServer server, IEnumerable<NetClient> clients, Func<bool> condition, int timeoutMs = 8000)
+    {
+        var list = clients.ToList();
+        var limit = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > limit) return false;
+            Pump(server, list, 10);
+        }
+        return true;
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -93,8 +106,7 @@ public class NetworkTests
             string token = report.Bots[0].Net.Token;
             int seat = report.Bots[0].World!.MyId;
             report.Bots[0].Net.Disconnect();
-            Pump(server, report.Bots.Skip(1).Select(b => b.Net), 300);
-            Assert.False(g.P(seat).Connected);
+            Assert.True(Until(server, report.Bots.Skip(1).Select(b => b.Net), () => !g.P(seat).Connected), "server did not notice the disconnect");
             var again = new NetClient { Name = "Бот1", Token = token };
             again.Connect("127.0.0.1", proxy.Port);
             var all = report.Bots.Skip(1).Select(b => b.Net).Append(again).ToList();
@@ -112,11 +124,10 @@ public class NetworkTests
             stranger.ErrorReceived += e => error = e;
             stranger.Connect("127.0.0.1", server.Port);
             all.Add(stranger);
-            Pump(server, all, 300);
+            Assert.True(Until(server, all, () => stranger.State == NetState.Lobby), "stranger could not reach the lobby");
             stranger.Send(MsgType.JoinGame, new IntMsg { V = session.Id });
             stranger.SendCommand(CmdType.EndTurn);
-            Pump(server, all, 300);
-            Assert.NotNull(error);
+            Assert.True(Until(server, all, () => error != null), "the server never refused the stranger");
             Assert.Null(stranger.World);
 
             // the save file restores into an identical simulation
@@ -173,22 +184,24 @@ public class NetworkTests
             }
             // the clients only ever talk to their own loopback port
             a.Connect("127.0.0.1", tunA.LocalPort); b.Connect("127.0.0.1", tunB.LocalPort);
-            Run(800);
+            for (int i = 0; i < 100 && (a.State != NetState.Lobby || b.State != NetState.Lobby); i++) Run(100);
             Assert.Equal(NetState.Lobby, a.State);
             Assert.Equal(NetState.Lobby, b.State);
             Assert.Equal(2, hostTunnel.PeerCount);
             a.Send(MsgType.CreateGame, new GameSettings { MapW = 40, MapH = 28, AiCount = 1, MaxPlayers = 2, Seed = 11 });
-            Run(300);
+            for (int i = 0; i < 100 && a.Room == null; i++) Run(100);
             b.Send(MsgType.JoinGame, new IntMsg { V = a.Room!.Info.Id });
-            Run(300);
+            for (int i = 0; i < 100 && (b.Room == null || a.Room.Slots.Count(x => !x.AI) < 2); i++) Run(100);
             a.Send(MsgType.StartGame);
-            Run(600);
+            for (int i = 0; i < 100 && (a.World == null || b.World == null); i++) Run(100);
             Assert.NotNull(a.World); Assert.NotNull(b.World);
             Assert.NotEqual(a.World!.MyId, b.World!.MyId);
             for (int turn = 0; turn < 5; turn++)
             {
+                int want = turn + 2;
                 a.SendCommand(CmdType.EndTurn); b.SendCommand(CmdType.EndTurn);
-                Run(400);
+                for (int i = 0; i < 100 && (a.World.Turn < want || b.World.Turn < want); i++) Run(100);
+                Run(150);
             }
             Assert.Equal(6, a.World.Turn);
             Assert.Equal(6, b.World.Turn);
@@ -214,16 +227,16 @@ public class NetworkTests
             var a = new NetClient { Name = "A" }; var b = new NetClient { Name = "B" };
             var both = new[] { a, b };
             a.Connect("127.0.0.1", server.Port); b.Connect("127.0.0.1", server.Port);
-            Pump(server, both, 300);
+            Assert.True(Until(server, both, () => a.State == NetState.Lobby && b.State == NetState.Lobby));
             a.Send(MsgType.CreateGame, new GameSettings { MapW = 40, MapH = 28, AiCount = 0, MaxPlayers = 2, Seed = 3 });
-            Pump(server, both, 200);
+            Assert.True(Until(server, both, () => a.Room != null));
             b.Send(MsgType.JoinGame, new IntMsg { V = a.Room!.Info.Id });
-            Pump(server, both, 200);
+            Assert.True(Until(server, both, () => b.Room != null && a.Room.Slots.Length == 2));
             b.Send(MsgType.StartGame); // not the host
             Pump(server, both, 200);
             Assert.Null(a.World);
             a.Send(MsgType.StartGame);
-            Pump(server, both, 300);
+            Assert.True(Until(server, both, () => a.World is { Turn: 1 } && b.World is { Turn: 1 }));
             Assert.Equal(1, a.World!.Turn);
 
             b.Disconnect();
@@ -242,3 +255,7 @@ public class NetworkTests
         }
     }
 }
+
+/// <summary>Network tests depend on real time (latency, quiet periods), so they do not share the CPU with the long simulations.</summary>
+[CollectionDefinition("network", DisableParallelization = true)]
+public class NetworkCollection { }

@@ -41,8 +41,8 @@ public static class AntiSnowball
                 p.Itr = p.Pressure = p.Lag = p.Sprawl = 0; p.SciMult = p.CulMult = p.UpkeepMult = 1;
                 continue;
             }
-            double med = Median(others.Select(o => (double)o.ScienceLevel).ToList());
-            p.Itr = (p.ScienceLevel - med) / (med + bal.ItrSmoothing);
+            double med = Median(others.Select(o => (double)o.DevLevel).ToList());
+            p.Itr = (p.DevLevel - med) / (med + bal.ItrSmoothing);
             p.Pressure = Sat((p.Itr - bal.LeaderDeadzone) / bal.LeaderScale);
             p.Lag = Math.Clamp((-p.Itr - bal.LagDeadzone) * bal.LagScale, 0, 1);
 
@@ -55,21 +55,32 @@ public static class AntiSnowball
         }
     }
 
-    /// <summary>Effective research cost for this player, including the catch-up discount.</summary>
-    public static int TechCost(Game g, Player p, TechDef t)
+    /// <summary>
+    /// "Low-base effect" for anything other players may already have: the cost shrinks with the player's lag
+    /// and with the share of rivals who know it. Used for technologies, institutions and branch nodes alike.
+    /// </summary>
+    public static int Discounted(Game g, Player p, int cost, Func<Player, bool> knownBy)
     {
-        if (p.Lag <= 0) return t.Cost;
+        if (p.Lag <= 0) return cost;
         int others = 0, know = 0;
         foreach (var o in g.Active)
         {
             if (o.Id == p.Id) continue;
             others++;
-            if (o.Has(t.Id)) know++;
+            if (knownBy(o)) know++;
         }
-        if (others == 0 || know == 0) return t.Cost;
+        if (others == 0 || know == 0) return cost;
         double discount = Math.Min(g.Bal.MaxDiscount, g.Bal.CatchUpStrength * p.Lag * know / others);
-        return Math.Max(1, (int)Math.Round(t.Cost * (1 - discount)));
+        return Math.Max(1, (int)Math.Round(cost * (1 - discount)));
     }
+
+    /// <summary>Effective research cost for this player, including the catch-up discount.</summary>
+    public static int TechCost(Game g, Player p, TechDef t) => Discounted(g, p, t.Cost, o => o.Has(t.Id));
+
+    public static int CivicCost(Game g, Player p, Rules.CivicDef c) =>
+        Discounted(g, p, c.Cost, o => Rules.HasCivic(o.Civics, o.CivicLevel, c.Id));
+
+    public static int NodeCost(Game g, Player p, Rules.NodeDef n) => Discounted(g, p, n.Cost, o => o.Nodes.Contains(n.Id));
 
     /// <summary>"Science echo": per-turn bonus science from peaceful contacts with more advanced civilizations.</summary>
     public static double Echo(Game g, Player p)
@@ -82,7 +93,9 @@ public static class AntiSnowball
             var rel = g.Rel(p.Id, o.Id);
             if (!rel.Met || rel.AtWar) continue;
             double gap = Math.Min(1.0, 2.0 * (o.ScienceLevel - mine) / o.ScienceLevel);
-            echo += o.SciRate * (g.Bal.EchoBase + (rel.OpenBorders ? g.Bal.EchoOpenBorders : 0)) * gap;
+            // ideas travel best between open borders and between peoples of one faith
+            double share = g.Bal.EchoBase + (rel.OpenBorders ? g.Bal.EchoOpenBorders : 0) + (g.SameFaith(p.Id, o.Id) ? 0.02 : 0);
+            echo += o.SciRate * share * gap;
         }
         return Math.Min(echo, g.Bal.EchoCap * p.SciRate + 2);
     }

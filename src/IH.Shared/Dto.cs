@@ -250,6 +250,10 @@ public sealed class MeDto : IWire
     public int[] Cooldowns = Array.Empty<int>();
     /// <summary>Stored branch power and its income, indexed like Rules.Branches.</summary>
     public int[] Power = Array.Empty<int>(), PowerRate = Array.Empty<int>();
+    /// <summary>Effective costs (with the catch-up discount) of available institutions and of not yet learned branch nodes.</summary>
+    public TechCostDto[] CivicCosts = Array.Empty<TechCostDto>(), NodeCosts = Array.Empty<TechCostDto>();
+    // links between systems
+    public int TradeLuxuries, WarWeariness, Brethren, StateReligion;
     public string Research = "";
     public string[] Known = Array.Empty<string>();
     public int[] Future = new int[4];
@@ -269,6 +273,7 @@ public sealed class MeDto : IWire
         w.S(ref Civic); w.SA(ref Civics); w.I(ref CivicProgress); w.I(ref CivicLevel); w.I(ref CultureRate); w.I(ref MyReligion);
         w.A(ref Religions);
         w.SA(ref Nodes); w.SA(ref BranchCurrent); w.IA(ref BranchProgress); w.IA(ref BranchRate); w.IA(ref Cooldowns); w.IA(ref Power); w.IA(ref PowerRate);
+        w.A(ref CivicCosts); w.A(ref NodeCosts); w.I(ref TradeLuxuries); w.I(ref WarWeariness); w.I(ref Brethren); w.I(ref StateReligion);
     }
 }
 

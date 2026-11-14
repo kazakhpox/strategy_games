@@ -154,6 +154,22 @@ public sealed partial class Game
         }
         p.Resources = connected.ToList();
         p.Luxuries = connected.Count(r => Rules.Res((Resource)r).Class == ResClass.Luxury);
+        // links to other players: luxuries traded over open borders, long wars, shared faith
+        var foreignLux = new HashSet<int>();
+        int weariness = 0, brethren = 0;
+        foreach (var o in Active)
+        {
+            if (o.Id == p.Id) continue;
+            var rel = Rel(p.Id, o.Id);
+            if (rel.AtWar) { if (S.Turn - rel.SinceTurn > Rules.WarWearinessAfter) weariness++; continue; }
+            if (rel.Met && SameFaith(p.Id, o.Id)) brethren++;
+            if (!rel.OpenBorders) continue;
+            foreach (int r in o.Resources)
+                if (Rules.Res((Resource)r).Class == ResClass.Luxury && !connected.Contains(r)) foreignLux.Add(r);
+        }
+        p.TradeLuxuries = Math.Min(Rules.MaxTradeLuxuries, foreignLux.Count);
+        p.WarWeariness = Math.Min(3, weariness);
+        p.Brethren = brethren;
         bool chair = S.Chair == p.Id;
         double faith = 0, culture = 0;
         var fx = Rules.CivicBonus(p.Civics, p.CivicLevel);
@@ -161,13 +177,15 @@ public sealed partial class Game
         p.CivicFx = fx;
         var founded = FoundedBy(p.Id);
         // branch power: from learned nodes everywhere, from buildings in orderly cities
-        var power = Rules.Branches.ToDictionary(b => b.Id, b => b.Nodes.Where(n => p.Nodes.Contains(n.Id)).Sum(n => n.Power));
+        var power = Rules.Branches.ToDictionary(b => b.Id, b => b.Nodes.Where(n => p.Nodes.Contains(n.Id)).Sum(n => n.Power)
+            // ...and from the map: resources tied to the branch, once the branch is begun
+            + (b.Nodes.Any(n => p.Nodes.Contains(n.Id)) ? b.PowerResources.Count(r => connected.Contains((int)Rules.ParseResource(r))) : 0));
 
         foreach (var c in cities)
         {
             // institutions apply everywhere, a belief only where the city follows its religion
             var bel = ReligionOf(c.Religion) is { } creed ? Rules.Beliefs[creed.Belief].Effect : null;
-            int happyCap = 5 + p.Luxuries + p.Future[Rules.BranchSocial] / 2 + fx.Happy + (bel?.Happy ?? 0);
+            int happyCap = 5 + p.Luxuries + p.TradeLuxuries + p.Future[Rules.BranchSocial] / 2 + fx.Happy + (bel?.Happy ?? 0);
             int foodFlat = fx.Food + (bel?.Food ?? 0), comFlat = 0, culFlat = 1 + fx.Culture + (bel?.Culture ?? 0);
             double prodPct = fx.ProdPct + (bel?.ProdPct ?? 0), sciPct = fx.SciPct + (bel?.SciPct ?? 0), goldPct = fx.GoldPct + (bel?.GoldPct ?? 0);
             double culPct = fx.CulPct + (bel?.CulPct ?? 0), maintCut = 0, upkeep = 0, cityFaith = 0, foodPct = 0;
@@ -191,6 +209,12 @@ public sealed partial class Game
                 prodPct += b.ProdPct; sciPct += b.SciPct; goldPct += b.GoldPct; culPct += b.CulPct;
                 maintCut = Math.Max(maintCut, b.MaintCutPct); upkeep += b.Upkeep;
                 if (c.DisorderTurns == 0) cityFaith += b.Faith;
+                if (b.With.Length > 0 && b.With.Any(r => connected.Contains((int)r)))
+                {
+                    // the building makes more of a resource the empire actually has
+                    foodFlat += b.WithFood; prodPct += b.WithProdPct; goldPct += b.WithGoldPct;
+                    if (c.DisorderTurns == 0) cityFaith += b.WithFaith;
+                }
                 if (c.DisorderTurns == 0 && b.X.Power > 0 && Rules.BranchOfBuilding(b.Id) is { } owner)
                     power[owner.Id] = power.GetValueOrDefault(owner.Id) + b.X.Power;
             }
@@ -207,13 +231,13 @@ public sealed partial class Game
                 bool blocked = false;
                 for (int i = 0; i < here.Count; i++) if (here[i].Owner != p.Id && AtWar(p.Id, here[i].Owner)) { blocked = true; break; }
                 if (blocked) continue;
-                var (tf, tp, tc) = Rules.TileYield(tile);
+                var (tf, tp, tc) = Rules.TileYield(Seen(p, tile)); // an unrevealed strategic resource yields nothing yet
                 if (tf + tp + tc == 0) continue;
                 cand.Add((t, tf * 4 + tp * 3 + tc * 2, tf, tp, tc));
             }
             cand.Sort((a, b) => b.score != a.score ? b.score.CompareTo(a.score) : a.tile.CompareTo(b.tile));
 
-            var (f, pr, co) = Rules.TileYield(S.Tiles[c.Tile], true);
+            var (f, pr, co) = Rules.TileYield(Seen(p, S.Tiles[c.Tile]), true);
             c.Worked.Clear();
             for (int i = 0; i < workers && i < cand.Count; i++)
             {
@@ -275,7 +299,7 @@ public sealed partial class Game
             var rel = Rel(p.Id, o.Id);
             if (rel.AtWar) atWar = true; else if (rel.OpenBorders) partners++;
         }
-        p.FavorRate = 1 + partners + (atWar ? 0 : 1) + fx.Favor;
+        p.FavorRate = 1 + partners + (atWar ? 0 : 1) + fx.Favor + p.Brethren; // co-religionists speak well of each other
         foreach (var b in Rules.Branches)
             p.BranchRate[b.Id] = b.FromScience * sci + b.FromCulture * culture + b.FromFaith * faith; // peace and open borders earn diplomatic favor
         p.EchoBonus = AntiSnowball.Echo(this, p);
@@ -349,10 +373,11 @@ public sealed partial class Game
             {
                 var node = Rules.Node(cur);
                 if (node == null || p.Nodes.Contains(cur)) p.BranchCurrent.Remove(b.Id); // the mod changed under a saved game
-                else if (have >= node.Cost)
+                else if (have >= AntiSnowball.NodeCost(this, p, node))
                 {
-                    have -= node.Cost;
+                    have -= AntiSnowball.NodeCost(this, p, node);
                     p.Nodes.Add(node.Id);
+                    p.NodePoints += node.Cost;
                     p.BranchCurrent.Remove(b.Id);
                     Emit(EventKind.NodeDone, s: node.Id, only: p.Id);
                 }
@@ -364,11 +389,13 @@ public sealed partial class Game
         {
             var civic = Rules.Civic(p.Civic);
             if (civic == null) p.Civic = null;
-            else if (p.CivicProgress >= civic.Cost)
+            else if (p.CivicProgress >= AntiSnowball.CivicCost(this, p, civic))
             {
-                p.CivicProgress -= civic.Cost;
+                p.CivicProgress -= AntiSnowball.CivicCost(this, p, civic);
                 if (civic.Level > 0) p.CivicLevel = Math.Max(p.CivicLevel, civic.Level); else p.Civics.Add(civic.Id);
                 p.Civic = null;
+                p.CivicPoints += civic.Cost;
+                p.ResearchProgress += (int)(civic.Cost * Rules.Inspiration); // a new institution inspires its scholars
                 Emit(EventKind.CivicDone, s: civic.Id, only: p.Id);
             }
         }
@@ -442,6 +469,7 @@ public sealed partial class Game
         if (t.Branch >= 0) p.Future[t.Branch] = Math.Max(p.Future[t.Branch], t.Level);
         else p.Known.Add(t.Id);
         p.TechPoints += t.Cost;
+        p.CivicProgress += (int)(t.Cost * Rules.Inspiration); // discoveries feed public life
         if (p.Research == t.Id) p.Research = null;
         // newly understood strategic resources appear on every tile the player has already explored
         for (int i = 0; i < p.KnownTiles.Length && i < S.Tiles.Length; i++)
@@ -485,7 +513,11 @@ public sealed partial class Game
         int dist = capital == null ? 0 : Grid.Distance(capital.Tile, c.Tile);
         double calm = 3 + p.Future[Rules.BranchSocial] + p.CivicFx.Calm + (ReligionOf(c.Religion) is { } creed ? Rules.Beliefs[creed.Belief].Effect.Calm : 0);
         foreach (var id in c.Buildings) calm += Rules.Building(id)?.Calm ?? 0;
+        int state = capital?.Religion ?? 0;
+        if (state != 0 && c.Religion == state) calm += 1;              // one faith with the capital steadies a city
         double pressure = Bal.UnrestPerPressure * p.Pressure * (0.6 + dist / 8.0) + Math.Max(0, c.Pop - c.Happy);
+        if (state != 0 && c.Religion != 0 && c.Religion != state) pressure += 2;   // religious strife
+        pressure += p.WarWeariness;                                      // every long war wears the people down
         c.Unrest = (int)Math.Clamp(c.Unrest + pressure - calm, 0, 100);
         if (c.Unrest < 100 || c.DisorderTurns > 0) return;
 

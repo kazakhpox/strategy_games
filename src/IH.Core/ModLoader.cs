@@ -56,6 +56,9 @@ public static class ModLoader
                 else if (!own.Contains(r) && !foreign.Contains(r) && Rules.Tech(r) == null && Rules.Civic(r) == null)
                     errors.Add($"узел {n.Id}: требование «{r}» не найдено среди технологий, институтов и узлов веток");
             }
+        b.PowerResources ??= Array.Empty<string>();
+        foreach (string r in b.PowerResources)
+            if (Rules.ParseResource(r) == Resource.None) errors.Add($"PowerResources: ресурс «{r}» неизвестен (см. --list-ids)");
         // content opened by the branch
         b.Units ??= Array.Empty<Rules.ModUnit>(); b.Buildings ??= Array.Empty<Rules.ModBuilding>(); b.Actions ??= Array.Empty<Rules.ActionDef>();
         var taken = others.Where(o => o.Id != b.Id).SelectMany(o => o.Units.Select(u => u.Id).Concat(o.Buildings.Select(x => x.Id)).Concat(o.Actions.Select(x => x.Id))).ToHashSet();
@@ -74,6 +77,8 @@ public static class ModLoader
             if (u.Str <= 0 || u.Str > 500) errors.Add($"юнит {u.Id}: Str должен быть от 1 до 500");
             if (u.Moves < 1 || u.Moves > 8) errors.Add($"юнит {u.Id}: Moves должен быть от 1 до 8");
             if (!Resolves(u.Requires)) errors.Add($"юнит {u.Id}: требование «{u.Requires}» не найдено");
+            u.Needs ??= "";
+            if (u.Needs.Length > 0 && Rules.ParseResource(u.Needs) == Resource.None) errors.Add($"юнит {u.Id}: ресурс «{u.Needs}» неизвестен (см. --list-ids)");
             if (u.Ranged < 0 || u.Ranged > 4) errors.Add($"юнит {u.Id}: Ranged (дальность) должен быть от 0 до 4");
             if (u.Ranged > 0 && u.RangedStr <= 0) errors.Add($"юнит {u.Id}: для дальнего боя задайте RangedStr");
             if (u.FearPct < 0 || u.FearPct > 80) errors.Add($"юнит {u.Id}: FearPct должен быть от 0 до 80");
@@ -209,6 +214,7 @@ public static class ModLoader
           Id, Name, Description
           FromScience / FromCulture / FromFaith   какая доля науки, культуры, веры за ход идёт в ветку (0.4 = 40%)
           PowerName     название собственного ресурса ветки ("Мана", "Духи" ...) — на него творятся действия
+          PowerResources  ресурсы карты (английские имена: Furs, Mercury ...), каждый подключённый даёт +1 ресурса ветки
           Version       для своих веток не нужен; чтобы ЗАМЕНИТЬ встроенную ветку, оставьте Version как в образце
           Enabled       false — отключить ветку
           Nodes, Units, Buildings, Actions
@@ -223,6 +229,7 @@ public static class ModLoader
 
         ЮНИТ (Units)  — Requires здесь и ниже: один id, который открывает
           Id, Name, Requires, Cost, Str (сила), Moves, CityDefPct, Sight, Sea
+          Needs        ресурс карты, без которого юнита не построить (английское имя, например Stone)
           Способности:
             Ranged + RangedStr   дальний бой: дальность и сила выстрела, без ответного урона
             HealAura     лечит союзников на своей и соседних клетках за ход

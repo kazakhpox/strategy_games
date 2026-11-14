@@ -124,7 +124,8 @@ public sealed partial class Game
             bool met = o.Id == pid || rel!.Met || !p.Alive;
             return new PlayerDto
             {
-                Id = o.Id, Name = o.Name, Color = o.Color, AI = o.IsAI, Alive = o.Alive, Neutral = o.Neutral,
+                // a civilisation nobody has met yet stays anonymous
+                Id = o.Id, Name = met || o.Neutral ? o.Name : "Неизвестная цивилизация", Color = o.Color, AI = o.IsAI, Alive = o.Alive, Neutral = o.Neutral,
                 Connected = o.Connected, EndedTurn = o.EndedTurn, Met = met,
                 Score = met && !o.Neutral ? Score(o) : 0, Cities = met ? CitiesOf(o.Id).Count() : 0,
                 Era = met ? Rules.EraOf(o.Known, o.Future) : 0, Techs = met ? o.TechCount : 0,
@@ -148,6 +149,11 @@ public sealed partial class Game
                 .Select(x => new ProposalDto { Id = x.Id, From = x.From, To = x.To, Kind = (byte)x.Kind }).ToArray(),
             Demo = Demographics(p),
             Nodes = p.Nodes.OrderBy(x => x).ToArray(),
+            CivicCosts = Rules.AvailableCivics(p.Civics, p.CivicLevel)
+                .Select(c => new TechCostDto { Id = c.Id, BaseCost = c.Cost, Cost = AntiSnowball.CivicCost(this, p, c) }).ToArray(),
+            NodeCosts = Rules.Branches.SelectMany(b => b.Nodes).Where(n => !p.Nodes.Contains(n.Id))
+                .Select(n => new TechCostDto { Id = n.Id, BaseCost = n.Cost, Cost = AntiSnowball.NodeCost(this, p, n) }).ToArray(),
+            TradeLuxuries = p.TradeLuxuries, WarWeariness = p.WarWeariness, Brethren = p.Brethren, StateReligion = StateReligion(pid),
             Power = Rules.Branches.Select(b => p.Power.GetValueOrDefault(b.Id)).ToArray(),
             PowerRate = Rules.Branches.Select(b => p.PowerRate.GetValueOrDefault(b.Id)).ToArray(),
             Cooldowns = Rules.Actions.Select(a => Math.Max(0, p.Cooldowns.GetValueOrDefault(a.Id) - S.Turn)).ToArray(),

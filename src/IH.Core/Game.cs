@@ -156,6 +156,9 @@ public sealed partial class Game
     /// <summary>Whether the player has a technology, a social institution or a custom branch node.</summary>
     public bool Knows(Player p, string id) => Rules.Satisfied(id, p.Known, p.Future, p.Civics, p.CivicLevel, p.Nodes);
     public Religion? ReligionOf(int id) => id <= 0 ? null : S.Religions.FirstOrDefault(r => r.Id == id);
+    /// <summary>The religion of the player's capital: what the state itself follows (0 = none).</summary>
+    public int StateReligion(int pid) => CitiesOf(pid).FirstOrDefault(c => c.Capital)?.Religion ?? 0;
+    public bool SameFaith(int a, int b) => StateReligion(a) is var r && r != 0 && r == StateReligion(b);
     public Religion? FoundedBy(int pid) => S.Religions.FirstOrDefault(r => r.Founder == pid);
     public bool IsMilitary(Unit u) => u.Def.Role == UnitRole.Military;
     public double Power(int pid) => UnitsOf(pid).Where(IsMilitary).Sum(u => UnitStr(u) * u.Hp / 100.0);
@@ -613,7 +616,8 @@ public sealed partial class Game
         if (!q.Alive || q.Neutral) return "За эту цивилизацию голосовать нельзя";
         if (amount <= 0 || p.Favor < amount) return "Недостаточно дипломатического одобрения";
         p.Favor -= amount;
-        S.Votes[candidate] = S.Votes.GetValueOrDefault(candidate) + amount;
+        // the voice of those left behind carries further: up to double weight for a deep laggard
+        S.Votes[candidate] = S.Votes.GetValueOrDefault(candidate) + (int)Math.Round(amount * (1 + p.Lag));
         return null;
     }
 
@@ -838,7 +842,9 @@ public sealed partial class Game
         {
             if (src.Religion == 0) continue;
             bool holy = ReligionOf(src.Religion)?.HolyCity == src.Id;
-            add.Add((src, src.Religion, holy ? 8 : 3));
+            // temples, shrines and cathedrals root the faith in their own city
+            int shrines = src.Buildings.Count(b => (Rules.Building(b)?.Faith ?? 0) >= 2);
+            add.Add((src, src.Religion, (holy ? 8 : 3) + shrines));
             foreach (var dst in cities)
                 if (dst != src && Grid.Distance(src.Tile, dst.Tile) <= Rules.ReligionRange) add.Add((dst, src.Religion, holy ? 3 : 1));
         }
@@ -882,6 +888,10 @@ public sealed partial class Game
         }
         P(old).KnownCities[city.Id] = CityPublicDto(city);
         RecomputeBorders();
+        // the city's worked tiles and yields were computed for the previous owner: redo both economies now
+        city.Worked.Clear();
+        foreach (int pid in new[] { old, newOwner })
+            if (P(pid).Alive && !P(pid).Neutral) RefreshEconomy(P(pid));
         if (conquest) Emit(EventKind.CityCaptured, city.Id, newOwner, old, s: city.Name);
         else Emit(EventKind.Secession, city.Id, old, s: city.Name);
         CheckDefeat(old);
