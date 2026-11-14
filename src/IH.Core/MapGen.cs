@@ -32,7 +32,48 @@ public static class MapGen
         return sum / norm;
     }
 
-    public static TileData[] Generate(int w, int h, int seed, HexGrid grid)
+    private static readonly (Resource r, int w)[] GrassRes =
+    {
+        (Resource.Rice, 6), (Resource.Cattle, 6), (Resource.Maize, 5), (Resource.Wheat, 3), (Resource.Horses, 5),
+        (Resource.Sugar, 2), (Resource.Cotton, 2), (Resource.Citrus, 2), (Resource.Tea, 2), (Resource.Honey, 2), (Resource.Tobacco, 2),
+    };
+    private static readonly (Resource r, int w)[] PlainsRes =
+    {
+        (Resource.Wheat, 7), (Resource.Maize, 4), (Resource.Cattle, 4), (Resource.Horses, 5), (Resource.Ivory, 2),
+        (Resource.Cotton, 2), (Resource.Olives, 2), (Resource.Wine, 2), (Resource.Salt, 2),
+    };
+    private static readonly (Resource r, int w)[] ForestRes =
+    {
+        (Resource.Deer, 7), (Resource.Bananas, 5), (Resource.Furs, 2), (Resource.Truffles, 2), (Resource.Cocoa, 2),
+        (Resource.Coffee, 2), (Resource.Spices, 2), (Resource.Dyes, 2), (Resource.Silk, 2),
+    };
+    private static readonly (Resource r, int w)[] HillsRes =
+    {
+        (Resource.Stone, 6), (Resource.Copper, 5), (Resource.Sheep, 6), (Resource.Iron, 6), (Resource.Niter, 4), (Resource.Coal, 4),
+        (Resource.Aluminium, 3), (Resource.Uranium, 2), (Resource.Diamonds, 1), (Resource.Gypsum, 1), (Resource.Jade, 1),
+        (Resource.Mercury, 1), (Resource.Silver, 2), (Resource.Amber, 1), (Resource.Marble, 2),
+    };
+    private static readonly (Resource r, int w)[] DryRes =
+    {
+        (Resource.Oil, 6), (Resource.Stone, 3), (Resource.Niter, 3), (Resource.Incense, 3), (Resource.Salt, 2),
+        (Resource.Gypsum, 1), (Resource.Deer, 3), (Resource.Furs, 2), (Resource.Uranium, 2), (Resource.Aluminium, 2),
+    };
+    private static readonly (Resource r, int w)[] SeaRes =
+    {
+        (Resource.Fish, 10), (Resource.Crabs, 5), (Resource.Pearls, 2), (Resource.Whales, 2), (Resource.Turtles, 2), (Resource.Oil, 3),
+    };
+
+    private static Resource Pick((Resource r, int w)[] table, Random rnd)
+    {
+        int total = 0;
+        foreach (var (_, w) in table) total += w;
+        int roll = rnd.Next(total);
+        foreach (var (r, w) in table) { if (roll < w) return r; roll -= w; }
+        return table[0].r;
+    }
+
+    /// <param name="mapType">0 = one continent, 1 = two continents split by a strait, 2 = archipelago.</param>
+    public static TileData[] Generate(int w, int h, int seed, HexGrid grid, int mapType = 0)
     {
         var tiles = new TileData[w * h];
         var rnd = new Random(seed);
@@ -44,7 +85,18 @@ public static class MapGen
                 double nx = (x + 0.5 * (y & 1)) / w, ny = (double)y / h;
                 double dx = (nx - 0.5) * 2, dy = (ny - 0.5) * 2;
                 double edge = Math.Max(Math.Abs(dx), Math.Abs(dy));
-                double elev = Fbm(nx * 5, ny * 5 * h / w, seed) + 0.35 - 0.55 * Math.Pow(edge, 2.2) - 0.25 * Math.Sqrt(dx * dx + dy * dy);
+                double elev;
+                if (mapType == 2)
+                    elev = Fbm(nx * 10, ny * 10 * h / w, seed) * 1.25 - 0.36 - 0.4 * Math.Pow(edge, 4);
+                else
+                {
+                    elev = Fbm(nx * 5, ny * 5 * h / w, seed) + 0.35 - 0.55 * Math.Pow(edge, 2.2) - 0.25 * Math.Sqrt(dx * dx + dy * dy);
+                    if (mapType == 1)
+                    {
+                        double strait = dx + (Fbm(ny * 4, 3.7, seed + 55) - 0.5) * 0.5;
+                        elev += 0.12 - 0.6 * Math.Exp(-strait * strait / 0.02);
+                    }
+                }
                 if (elev < 0.33) { t.Terrain = Terrain.Ocean; continue; }
 
                 double lat = Math.Abs(dy);
@@ -71,25 +123,23 @@ public static class MapGen
             ref var t = ref tiles[i];
             if (t.Relief == Relief.Mountain) continue;
             int roll = rnd.Next(1000);
-            if (t.Terrain == Terrain.Coast) { if (roll < 60) t.Resource = Resource.Fish; continue; }
-            if (t.IsWater || roll >= 90) continue;
-            int pick = rnd.Next(100);
-            if (t.Relief == Relief.Hills)
-                t.Resource = pick < 35 ? Resource.Iron : pick < 60 ? Resource.Stone : pick < 80 ? Resource.Gold : Resource.Uranium;
-            else if (t.Terrain == Terrain.Desert || t.Terrain == Terrain.Tundra || t.Terrain == Terrain.Snow)
-                t.Resource = pick < 60 ? Resource.Oil : pick < 80 ? Resource.Stone : Resource.Gold;
-            else if (!t.Forest)
-                t.Resource = pick < 35 ? Resource.Wheat : pick < 65 ? Resource.Cattle : pick < 90 ? Resource.Horses : Resource.Stone;
+            if (t.Terrain == Terrain.Coast) { if (roll < 80) t.Resource = Pick(SeaRes, rnd); continue; }
+            if (t.IsWater || t.Terrain == Terrain.Snow || roll >= 130) continue;
+            if (t.Relief == Relief.Hills) t.Resource = Pick(HillsRes, rnd);
+            else if (t.Terrain is Terrain.Desert or Terrain.Tundra) t.Resource = Pick(DryRes, rnd);
+            else if (t.Forest) t.Resource = Pick(ForestRes, rnd);
+            else t.Resource = Pick(t.Terrain == Terrain.Grassland ? GrassRes : PlainsRes, rnd);
         }
         return tiles;
     }
 
     /// <summary>Picks fair, well-spread start tiles on the largest landmass.</summary>
-    public static List<int> StartPositions(TileData[] tiles, HexGrid grid, int count, int seed)
+    public static List<int> StartPositions(TileData[] tiles, HexGrid grid, int count, int seed, bool anyLand = false)
     {
         // largest connected passable region
         var comp = new int[tiles.Length];
         int best = 0, bestSize = 0, cur = 0;
+        var sizes = new Dictionary<int, int>();
         var stack = new Stack<int>();
         for (int i = 0; i < tiles.Length; i++)
         {
@@ -100,13 +150,16 @@ public static class MapGen
                 int t = stack.Pop(); size++;
                 foreach (int n in grid.Nb[t]) if (comp[n] == 0 && tiles[n].Passable) { comp[n] = cur; stack.Push(n); }
             }
+            sizes[cur] = size;
             if (size > bestSize) { bestSize = size; best = cur; }
         }
 
         var cand = new List<(int tile, int score)>();
         for (int i = 0; i < tiles.Length; i++)
         {
-            if (comp[i] != best || tiles[i].Terrain is Terrain.Snow or Terrain.Desert || tiles[i].Forest) continue;
+            // on island maps any landmass big enough for a couple of cities will do
+            bool home = anyLand ? comp[i] != 0 && sizes[comp[i]] >= 14 : comp[i] == best;
+            if (!home || tiles[i].Terrain is Terrain.Snow or Terrain.Desert || tiles[i].Forest) continue;
             int x = grid.X(i), y = grid.Y(i);
             if (x < 2 || y < 2 || x >= grid.W - 2 || y >= grid.H - 2) continue;
             int score = 0;

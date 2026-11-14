@@ -37,7 +37,7 @@ public sealed partial class Game
         {
             if (!vis[i]) { p.KnownTiles[i] &= ~TileData.VisibleBit; continue; }
             var t = S.Tiles[i];
-            p.KnownTiles[i] = t.Pack() | TileData.ExploredBit | TileData.VisibleBit;
+            p.KnownTiles[i] = Seen(p, t).Pack() | TileData.ExploredBit | TileData.VisibleBit;
             if (t.Owner >= 0 && t.Owner != p.Id) Meet(p.Id, t.Owner);
             if (t.CityId >= 0)
             {
@@ -128,6 +128,10 @@ public sealed partial class Game
             Proposals = S.Proposals.Where(x => x.To == pid || x.From == pid)
                 .Select(x => new ProposalDto { Id = x.Id, From = x.From, To = x.To, Kind = (byte)x.Kind }).ToArray(),
             Demo = Demographics(p),
+            Faith = p.Faith, FaithRate = (int)p.FaithRate, Favor = p.Favor, FavorRate = (int)p.FavorRate, Luxuries = p.Luxuries,
+            Chair = S.Chair, CongressIn = Rules.CongressPeriod - S.Turn % Rules.CongressPeriod,
+            Resources = p.Resources.ToArray(),
+            Votes = S.Players.Select(o => S.Votes.GetValueOrDefault(o.Id)).ToArray(),
         };
         return view;
     }

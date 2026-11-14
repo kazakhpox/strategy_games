@@ -16,6 +16,11 @@ public static class SimpleAI
         g.RefreshEconomy(p);
         Research(g, p);
         Finance(g, p);
+        // shortly before each congress, back ourselves with half of the accumulated favor
+        if (g.S.Turn % Rules.CongressPeriod == Rules.CongressPeriod - 2 && p.Favor >= 10) Do(g, p, CmdType.Vote, p.Id, p.Favor / 2);
+        // faith finishes peaceful projects
+        foreach (var c in g.CitiesOf(pid).ToList())
+            if (c.Queue.Count > 0 && p.Faith >= 60 && Rules.FaithPrice(Rules.ItemCost(c.Queue[0]), c.Prod) is > 0 and var fp && fp <= p.Faith) Do(g, p, CmdType.BuyFaith, c.Id);
         Diplomacy(g, p);
         Cities(g, p);
         foreach (var u in g.UnitsOf(pid).OrderBy(u => u.Id).ToList())
@@ -65,7 +70,7 @@ public static class SimpleAI
         // spare gold modernises the oldest units
         foreach (var u in g.UnitsOf(p.Id).Where(g.IsMilitary).OrderBy(u => u.Def.Str).ThenBy(u => u.Id).Take(3).ToList())
         {
-            int to = Rules.UpgradeTarget(u.Type, p.Has);
+            int to = Rules.UpgradeTarget(u.Type, p.Has, p.HasResource);
             if (to >= 0 && p.Gold >= Rules.UpgradePrice(u.Type, to) + 120) Do(g, p, CmdType.Upgrade, u.Id);
         }
     }
@@ -105,7 +110,7 @@ public static class SimpleAI
         for (int i = 0; i < Rules.Units.Length; i++)
         {
             var d = Rules.Units[i];
-            if (d.Role == UnitRole.Military && p.Has(d.Tech) && d.Str + d.CityDefPct / 50 > Rules.Units[best].Str + Rules.Units[best].CityDefPct / 50)
+            if (d.Role == UnitRole.Military && !d.Sea && p.Has(d.Tech) && p.HasResource(d.Needs) && d.Str + d.CityDefPct / 50 > Rules.Units[best].Str + Rules.Units[best].CityDefPct / 50)
                 best = i;
         }
         return best;
@@ -116,7 +121,8 @@ public static class SimpleAI
         var cities = g.CitiesOf(p.Id).OrderBy(c => c.Id).ToList();
         var units = g.UnitsOf(p.Id).ToList();
         int settlers = units.Count(u => u.Def.Role == UnitRole.Settler) + cities.Count(c => c.Queue.Contains("u:settler"));
-        int workers = units.Count(u => u.Def.Role == UnitRole.Worker) + cities.Count(c => c.Queue.Contains("u:worker"));
+        int workers = units.Count(u => u.Def.Role == UnitRole.Worker && !u.Def.Sea) + cities.Count(c => c.Queue.Contains("u:worker"));
+        int boats = units.Count(u => u.Def.Id == "work_boat") + cities.Count(c => c.Queue.Contains("u:work_boat"));
         int military = units.Count(g.IsMilitary);
         bool war = g.Active.Any(q => q.Id != p.Id && g.Rel(p.Id, q.Id).AtWar);
         int target = Math.Min(3 + g.S.Turn / 30, 8);
@@ -132,7 +138,11 @@ public static class SimpleAI
                 .OrderBy(b => b.Cost).FirstOrDefault();
             bool broke = p.GoldRate < 0 && p.Slider <= 40;
             var money = broke ? Rules.Buildings.Where(b => (b.GoldPct > 0 || b.MaintCutPct > 0) && g.CanBuild(p, c, "b:" + b.Id)).OrderBy(b => b.Cost).FirstOrDefault() : null;
+            // one fishing boat per coastal city that has an unworked sea resource
+            bool wantBoat = p.Has("sailing") && g.Coastal(c) && boats < cities.Count(g.Coastal)
+                && g.Grid.Range(c.Tile, Rules.CityWorkRadius).Any(t => g.S.Tiles[t].IsWater && g.S.Tiles[t].Owner == p.Id && JobFor(g, p, g.S.Tiles[t], t) != WorkKind.None);
             if (defenders == 0) item = soldier;
+            else if (wantBoat) { item = "u:work_boat"; boats++; }
             else if (money != null) item = "b:" + money.Id;
             else if (broke && !war) item = Rules.Wealth;
             else if (cities.Count + settlers < target && c.Pop >= 2 && BestSite(g, p, c.Tile, 8).tile >= 0) { item = "u:settler"; settlers++; }
@@ -189,11 +199,19 @@ public static class SimpleAI
         if (canHere) Do(g, p, CmdType.FoundCity, u.Id);
     }
 
-    private static WorkKind JobFor(Player p, in TileData t, int tile)
+    private static WorkKind JobFor(Game g, Player p, in TileData raw, int tile)
     {
-        if (t.Improvement != Improvement.None) return WorkKind.None;
+        var t = g.Seen(p, raw);
+        if (t.Resource != Resource.None)
+        {
+            // a resource wants its own improvement, replacing whatever generic one is there
+            var need = Rules.Res(t.Resource).Imp;
+            if (Rules.ResourceWorked(t)) return WorkKind.None;
+            return Rules.WorkFits(t, need) && p.Has(Rules.WorkTech(need)) ? need : WorkKind.None;
+        }
+        if (t.Improvement != Improvement.None || t.IsWater) return WorkKind.None;
         if (Rules.WorkFits(t, WorkKind.Mine) && p.Has("mining")) return WorkKind.Mine;
-        bool wantFarm = t.Resource is Resource.Wheat or Resource.Cattle || tile % 3 != 0;
+        bool wantFarm = tile % 3 != 0;
         if (wantFarm && Rules.WorkFits(t, WorkKind.Farm) && p.Has("agriculture")) return WorkKind.Farm;
         if (Rules.WorkFits(t, WorkKind.Cottage) && p.Has("pottery")) return WorkKind.Cottage;
         if (Rules.WorkFits(t, WorkKind.Farm) && p.Has("agriculture")) return WorkKind.Farm;
@@ -210,7 +228,8 @@ public static class SimpleAI
             {
                 var tile = g.S.Tiles[t];
                 if (tile.Owner != p.Id) continue;
-                var kind = JobFor(p, tile, t);
+                if (tile.IsWater != u.Def.Sea) continue; // boats work the sea, workers the land
+                var kind = JobFor(g, p, tile, t);
                 if (kind == WorkKind.None) continue;
                 if (g.At(t).Any(x => x.Id != u.Id && x.Def.Role == UnitRole.Worker)) continue;
                 int d = g.Grid.Distance(u.Tile, t) * 2 - (c.Worked.Contains(t) ? 3 : 0);
@@ -218,7 +237,7 @@ public static class SimpleAI
             }
         if (best < 0)
         {
-            if (p.Has("wheel") && g.S.Tiles[u.Tile].Owner == p.Id && Rules.WorkFits(g.S.Tiles[u.Tile], WorkKind.Road)
+            if (!u.Def.Sea && p.Has("wheel") && g.S.Tiles[u.Tile].Owner == p.Id && Rules.WorkFits(g.S.Tiles[u.Tile], WorkKind.Road)
                 && g.CitiesOf(p.Id).Any(c => g.Grid.Distance(c.Tile, u.Tile) == 1))
                 Do(g, p, CmdType.Work, u.Id, (int)WorkKind.Road);
             return;

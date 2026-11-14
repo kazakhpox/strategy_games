@@ -26,6 +26,7 @@ public sealed partial class Game
 
     public static Game Create(GameSettings settings, IList<(string name, bool ai)> players, BalanceConfig? balance = null)
     {
+        settings.MapType = Math.Clamp(settings.MapType, 0, 2);
         if (players.Count < 1 || players.Count > 12) throw new ArgumentException("1..12 players required");
         settings.MapW = Math.Clamp(settings.MapW, 24, 160);
         settings.MapH = Math.Clamp(settings.MapH, 16, 120);
@@ -37,10 +38,10 @@ public sealed partial class Game
         List<int>? starts = null;
         for (int attempt = 0; attempt < 20 && starts == null; attempt++)
         {
-            s.Tiles = MapGen.Generate(s.W, s.H, settings.Seed + attempt * 7919, grid);
+            s.Tiles = MapGen.Generate(s.W, s.H, settings.Seed + attempt * 7919, grid, settings.MapType);
             try
             {
-                var st = MapGen.StartPositions(s.Tiles, grid, players.Count, settings.Seed + attempt);
+                var st = MapGen.StartPositions(s.Tiles, grid, players.Count, settings.Seed + attempt, settings.MapType != 0);
                 bool spread = true;
                 for (int i = 0; i < st.Count && spread; i++)
                     for (int j = i + 1; j < st.Count; j++)
@@ -106,6 +107,17 @@ public sealed partial class Game
         return owner < 0 || owner == pid || AtWar(pid, owner) || Rel(pid, owner).OpenBorders;
     }
 
+    public Mover MoverOf(Unit u) => Rules.MoverFor(u.Def, P(u.Owner).Has);
+    public bool Embarked(Unit u) => !u.Def.Sea && S.Tiles[u.Tile].IsWater;
+    public bool Coastal(City c) => Grid.Nb[c.Tile].Any(n => S.Tiles[n].IsWater);
+
+    /// <summary>The tile as this player knows it: strategic resources stay hidden until their technology.</summary>
+    public TileData Seen(Player p, TileData t)
+    {
+        if (!Rules.ResourceVisible(t.Resource, p.Has)) t.Resource = Resource.None;
+        return t;
+    }
+
     public double UnitStr(Unit u) => u.Def.Str * (1 + 0.05 * P(u.Owner).Future[Rules.BranchNano]);
     public bool IsMilitary(Unit u) => u.Def.Role == UnitRole.Military;
     public double Power(int pid) => UnitsOf(pid).Where(IsMilitary).Sum(u => UnitStr(u) * u.Hp / 100.0);
@@ -169,6 +181,10 @@ public sealed partial class Game
                 RemoveUnit(u); CheckDefeat(pid); return null;
             }
             case CmdType.Upgrade: return CmdUpgrade(p, c.A);
+            case CmdType.BuyFaith: return CmdBuyFaith(p, c.A);
+            case CmdType.BuyTile: return CmdBuyTile(p, c.A, c.B);
+            case CmdType.Gift: return CmdGift(p, c.A, c.B, c.C);
+            case CmdType.Vote: return CmdVote(p, c.A, c.B);
             case CmdType.SetProduction: return CmdProduction(p, c.A, c.S, c.B);
             case CmdType.RemoveQueue:
             {
@@ -218,9 +234,10 @@ public sealed partial class Game
     // ----------------------------------------------------------- movement
     public List<int>? PathFor(Unit u, int target)
     {
+        var mover = MoverOf(u);
         return Grid.FindPath(u.Tile, target, (from, to) =>
         {
-            int c = Rules.MoveCost(S.Tiles[from], S.Tiles[to]);
+            int c = Rules.MoveCost(S.Tiles[from], S.Tiles[to], mover);
             if (c < 0 || !CanEnterTerritory(u.Owner, to)) return -1;
             if (to != target)
             {
@@ -260,7 +277,7 @@ public sealed partial class Game
     private bool Step(Unit u, int to)
     {
         int from = u.Tile;
-        int cost = Rules.MoveCost(S.Tiles[from], S.Tiles[to]);
+        int cost = Rules.MoveCost(S.Tiles[from], S.Tiles[to], MoverOf(u));
         if (cost < 0 || !CanEnterTerritory(u.Owner, to)) return false;
         var others = At(to).Where(x => x.Owner != u.Owner).ToList();
         var city = CityAt(to);
@@ -303,6 +320,7 @@ public sealed partial class Game
 
     public double DefenseStr(Unit d)
     {
+        if (Embarked(d)) return UnitStr(d) * 0.5 * d.Hp / 100.0; // helpless aboard transports
         double mod = 1;
         var t = S.Tiles[d.Tile];
         if (t.Relief == Relief.Hills) mod += 0.25;
@@ -320,7 +338,7 @@ public sealed partial class Game
     private void Attack(Unit att, int tile, List<Unit> defenders)
     {
         var def = defenders.OrderByDescending(DefenseStr).ThenBy(x => x.Id).First();
-        double a = UnitStr(att) * att.Hp / 100.0, d = DefenseStr(def);
+        double a = UnitStr(att) * att.Hp / 100.0 * (Embarked(att) ? 0.5 : 1), d = DefenseStr(def);
         int pA = (int)(1000 * a / (a + d));
         int dmgDef = (int)Math.Clamp(20 * (3 * a + d) / (3 * d + a), 6, 60);
         int dmgAtt = (int)Math.Clamp(20 * (3 * d + a) / (3 * a + d), 6, 60);
@@ -392,12 +410,14 @@ public sealed partial class Game
         if (item.StartsWith("u:"))
         {
             int i = Rules.UnitIndex(item[2..]);
-            return i >= 0 && p.Has(Rules.Units[i].Tech);
+            if (i < 0) return false;
+            var d = Rules.Units[i];
+            return p.Has(d.Tech) && p.HasResource(d.Needs) && (!d.Sea || Coastal(city));
         }
         if (item.StartsWith("b:"))
         {
             var b = Rules.Building(item[2..]);
-            return b != null && b.Id != "palace" && p.Has(b.Tech) && !city.Buildings.Contains(b.Id);
+            return b != null && b.Id != "palace" && p.Has(b.Tech) && !city.Buildings.Contains(b.Id) && (!b.Coastal || Coastal(city));
         }
         return false;
     }
@@ -438,7 +458,8 @@ public sealed partial class Game
         var u = Own(p, unitId, out var err); if (u == null) return err;
         if (u.Def.Role != UnitRole.Worker) return "Улучшать землю могут только рабочие";
         if (kind == WorkKind.None || kind > WorkKind.Road) return "Неизвестное улучшение";
-        var t = S.Tiles[u.Tile];
+        var t = Seen(p, S.Tiles[u.Tile]);
+        if (t.IsWater != u.Def.Sea) return u.Def.Sea ? "Рыбацкое судно работает только на воде" : "Рабочие не строят на воде — нужно рыбацкое судно";
         if (!Rules.WorkFits(t, kind)) return "Здесь это построить нельзя";
         var tech = Rules.WorkTech(kind);
         if (!p.Has(tech)) return $"Нужна технология: {Rules.Tech(tech)?.Name}";
@@ -447,10 +468,76 @@ public sealed partial class Game
         return null;
     }
 
+    private string? CmdBuyFaith(Player p, int cityId)
+    {
+        var city = OwnCity(p, cityId, out var err); if (city == null) return err;
+        if (city.DisorderTurns > 0) return "В городе беспорядки";
+        if (city.Queue.Count == 0 || city.Queue[0] == Rules.Wealth) return "Нечего покупать";
+        string item = city.Queue[0];
+        if (item.StartsWith("u:") && Rules.Units[Rules.UnitIndex(item[2..])].Role == UnitRole.Military)
+            return "За веру покупаются только здания и мирные юниты";
+        int cost = Rules.ItemCost(item);
+        int price = Rules.FaithPrice(cost, city.Prod);
+        if (price <= 0) return "Уже оплачено";
+        if (p.Faith < price) return $"Недостаточно веры (нужно {price})";
+        p.Faith -= price;
+        city.Prod = cost;
+        return null;
+    }
+
+    private string? CmdBuyTile(Player p, int cityId, int tile)
+    {
+        var city = OwnCity(p, cityId, out var err); if (city == null) return err;
+        if (!Grid.Valid(tile)) return "Неверная клетка";
+        if (S.Tiles[tile].Owner >= 0) return "У этой клетки уже есть владелец";
+        int dist = Grid.Distance(city.Tile, tile);
+        if (dist > 4) return "Клетка слишком далеко от города";
+        if (!Grid.Nb[tile].Any(n => S.Tiles[n].Owner == p.Id)) return "Купить можно только клетку рядом со своей территорией";
+        int price = Rules.TilePrice(dist, S.Tiles.Count(t => t.Owner == p.Id));
+        if (p.Gold < price) return $"Недостаточно золота (нужно {price})";
+        p.Gold -= price;
+        city.ExtraTiles.Add(tile);
+        RecomputeBorders();
+        return null;
+    }
+
+    private string? CmdGift(Player p, int target, int kind, int amount)
+    {
+        if (target < 0 || target >= S.Players.Count || target == p.Id) return "Неизвестный игрок";
+        var q = P(target);
+        if (!q.Alive || q.Neutral || !Rel(p.Id, target).Met) return "С этой цивилизацией нет контакта";
+        if (amount <= 0) return "Недопустимая сумма";
+        if (kind == 0)
+        {
+            if (p.Gold < amount) return "Недостаточно золота";
+            p.Gold -= amount; q.Gold += amount;
+            Emit(EventKind.Info, s: $"«{p.Name}» передаёт вам {amount} золота", only: target);
+        }
+        else if (kind == 1)
+        {
+            if (p.Favor < amount) return "Недостаточно дипломатического одобрения";
+            p.Favor -= amount; q.Favor += amount;
+            Emit(EventKind.Info, s: $"«{p.Name}» передаёт вам {amount} дипломатического одобрения", only: target);
+        }
+        else return "Неизвестный вид подарка";
+        return null;
+    }
+
+    private string? CmdVote(Player p, int candidate, int amount)
+    {
+        if (candidate < 0 || candidate >= S.Players.Count) return "Неизвестный игрок";
+        var q = P(candidate);
+        if (!q.Alive || q.Neutral) return "За эту цивилизацию голосовать нельзя";
+        if (amount <= 0 || p.Favor < amount) return "Недостаточно дипломатического одобрения";
+        p.Favor -= amount;
+        S.Votes[candidate] = S.Votes.GetValueOrDefault(candidate) + amount;
+        return null;
+    }
+
     private string? CmdUpgrade(Player p, int unitId)
     {
         var u = Own(p, unitId, out var err); if (u == null) return err;
-        int to = Rules.UpgradeTarget(u.Type, p.Has);
+        int to = Rules.UpgradeTarget(u.Type, p.Has, p.HasResource);
         if (to < 0) return "Этот юнит пока нельзя улучшить";
         if (S.Tiles[u.Tile].Owner != p.Id) return "Улучшать юниты можно только на своей территории";
         if (u.Moves <= 0) return "У юнита не осталось очков движения";
@@ -514,6 +601,10 @@ public sealed partial class Game
                     bestDist[t] = d; bestCul[t] = c.Culture; S.Tiles[t].Owner = c.Owner;
                 }
             }
+        // purchased tiles keep their owner unless culture of another city already covers them
+        foreach (var c in S.Cities.Values.OrderBy(c => c.Id))
+            foreach (int t in c.ExtraTiles)
+                if (S.Tiles[t].Owner < 0) S.Tiles[t].Owner = c.Owner;
     }
 
     // ---------------------------------------------------------- diplomacy

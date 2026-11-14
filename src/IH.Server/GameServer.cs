@@ -156,6 +156,7 @@ public sealed class GameServer
                 st.MapW = Math.Clamp(st.MapW, 24, 160); st.MapH = Math.Clamp(st.MapH, 16, 120);
                 st.MaxPlayers = Math.Clamp(st.MaxPlayers, 1, 8); st.AiCount = Math.Clamp(st.AiCount, 0, 11);
                 st.TurnTimerSec = Math.Clamp(st.TurnTimerSec, 0, 3600);
+                st.MapType = Math.Clamp(st.MapType, 0, 2);
                 var s = AddSession(st);
                 s.Join(c);
                 Log($"+ {c.Name} создал игру «{st.Name}» (#{s.Id})");

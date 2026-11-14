@@ -112,6 +112,16 @@ public sealed partial class Game
     private void GlobalEnd()
     {
         S.Turn++;
+        if (S.Turn % Rules.CongressPeriod == 0)
+        {
+            // world congress: whoever received the most favor chairs it until the next session
+            int winner = -1, best = 0;
+            foreach (var (id, votes) in S.Votes.OrderBy(v => v.Key))
+                if (votes > best && P(id).Alive) { best = votes; winner = id; }
+            S.Chair = winner;
+            S.Votes.Clear();
+            Emit(EventKind.Congress, winner, best);
+        }
         foreach (var u in UnitsOf(Neutral.Id)) u.Hp = Math.Min(100, u.Hp + 10);
         foreach (var c in CitiesOf(Neutral.Id)) c.Culture += 1;
         RecomputeBorders();
@@ -130,9 +140,25 @@ public sealed partial class Game
         double sci = 0, gold = 0, bUp = 0, maint = 0;
         var cand = new List<(int tile, int score, int f, int pr, int co)>();
 
+        // connected resources: improved inside the borders, or lying under a city
+        var connected = new SortedSet<int>();
+        int roads = 0;
+        for (int i = 0; i < S.Tiles.Length; i++)
+        {
+            var t = S.Tiles[i];
+            if (t.Owner != p.Id) continue;
+            if (t.Road && t.CityId < 0) roads++;
+            if (t.Resource != Resource.None && (Rules.ResourceWorked(t) || t.CityId >= 0) && Rules.ResourceVisible(t.Resource, p.Has))
+                connected.Add((int)t.Resource);
+        }
+        p.Resources = connected.ToList();
+        p.Luxuries = connected.Count(r => Rules.Res((Resource)r).Class == ResClass.Luxury);
+        bool chair = S.Chair == p.Id;
+        double faith = 0;
+
         foreach (var c in cities)
         {
-            int happyCap = 5 + p.Future[Rules.BranchSocial] / 2, foodFlat = 0, comFlat = 0, culFlat = 1;
+            int happyCap = 5 + p.Luxuries + p.Future[Rules.BranchSocial] / 2, foodFlat = 0, comFlat = 0, culFlat = 1;
             double prodPct = 0, sciPct = 0, goldPct = 0, culPct = 0, maintCut = 0, upkeep = 0;
             foreach (var id in c.Buildings)
             {
@@ -141,6 +167,7 @@ public sealed partial class Game
                 happyCap += b.Happy; foodFlat += b.Food; comFlat += b.Commerce; culFlat += b.Culture;
                 prodPct += b.ProdPct; sciPct += b.SciPct; goldPct += b.GoldPct; culPct += b.CulPct;
                 maintCut = Math.Max(maintCut, b.MaintCutPct); upkeep += b.Upkeep;
+                if (c.DisorderTurns == 0) faith += b.Faith;
             }
             c.Happy = happyCap;
             c.Unhappy = Math.Min(c.Pop, Math.Max(0, c.Pop - happyCap) + Math.Min(2, c.Unrest / 40));
@@ -185,6 +212,7 @@ public sealed partial class Game
                 c.GoldRate = (co - s) * (1 + goldPct / 100 + 0.05 * p.Future[Rules.BranchSpace]);
                 c.CulRate = culFlat * (1 + culPct / 100 + 0.05 * p.Future[Rules.BranchSocial]) * p.CulMult;
                 if (c.Queue.Count > 0 && c.Queue[0] == Rules.Wealth) c.GoldRate += c.ProdRate;
+                if (chair) { c.GoldRate *= 1.1; c.CulRate *= 1.1; } // chair of the world congress
             }
             int dist = capital == null ? 0 : Grid.Distance(capital.Tile, c.Tile);
             c.Maint = c.Capital ? 0 : (0.5 + dist / 8.0 + 0.25 * (cities.Count - 1)) * (1 - maintCut / 100);
@@ -193,13 +221,20 @@ public sealed partial class Game
         }
 
         int units = UnitsOf(p.Id).Count();
-        int roads = 0;
-        for (int i = 0; i < S.Tiles.Length; i++) if (S.Tiles[i].Owner == p.Id && S.Tiles[i].Road && S.Tiles[i].CityId < 0) roads++;
         p.Income = gold; p.SciRate = sci;
         p.UnitUpkeep = Math.Max(0, units - (4 + 3 * cities.Count));
         p.BuildingUpkeep = bUp; p.CityMaint = maint; p.RoadUpkeep = roads * 0.15;
         double baseCost = p.UnitUpkeep + p.BuildingUpkeep + p.CityMaint + p.RoadUpkeep;
         p.StrainCost = baseCost * (p.UpkeepMult - 1);
+        p.FaithRate = faith;
+        int partners = 0; bool atWar = false;
+        foreach (var o in Active)
+        {
+            if (o.Id == p.Id) continue;
+            var rel = Rel(p.Id, o.Id);
+            if (rel.AtWar) atWar = true; else if (rel.OpenBorders) partners++;
+        }
+        p.FavorRate = 1 + partners + (atWar ? 0 : 1); // peace and open borders earn diplomatic favor
         p.EchoBonus = AntiSnowball.Echo(this, p);
         p.GoldRate = (int)Math.Floor(p.Income - baseCost - p.StrainCost);
     }
@@ -213,10 +248,10 @@ public sealed partial class Game
             if (u.Work != WorkKind.None && --u.WorkTurns <= 0)
             {
                 ref var t = ref S.Tiles[u.Tile];
-                if (Rules.WorkFits(t, u.Work))
+                if (Rules.WorkFits(Seen(p, t), u.Work))
                 {
                     if (u.Work == WorkKind.Road) t.Road = true;
-                    else t.Improvement = u.Work switch { WorkKind.Farm => Improvement.Farm, WorkKind.Mine => Improvement.Mine, _ => Improvement.Cottage };
+                    else t.Improvement = (Improvement)(int)u.Work;
                 }
                 u.Work = WorkKind.None; u.WorkTurns = 0;
             }
@@ -260,6 +295,8 @@ public sealed partial class Game
             }
         }
 
+        p.Faith += (int)p.FaithRate;
+        p.Favor += (int)p.FavorRate;
         p.Gold += p.GoldRate;
         if (p.Gold < 0)
         {
@@ -288,6 +325,13 @@ public sealed partial class Game
         else p.Known.Add(t.Id);
         p.TechPoints += t.Cost;
         if (p.Research == t.Id) p.Research = null;
+        // newly understood strategic resources appear on every tile the player has already explored
+        for (int i = 0; i < p.KnownTiles.Length && i < S.Tiles.Length; i++)
+        {
+            var r = S.Tiles[i].Resource;
+            if (p.KnownTiles[i] != 0 && r != Resource.None && Rules.Res(r).Reveal == t.Id)
+                p.KnownTiles[i] = (p.KnownTiles[i] & ~TileData.ResourceMask) | ((ulong)r << 6);
+        }
         Emit(EventKind.TechDone, s: t.Id, only: p.Id);
     }
 

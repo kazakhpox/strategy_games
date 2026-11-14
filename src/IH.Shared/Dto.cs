@@ -12,6 +12,10 @@ public enum CmdType : byte
 {
     None, MoveUnit, FoundCity, Work, Fortify, Disband, SetProduction, RemoveQueue, Buy,
     SetResearch, SetSlider, DeclareWar, Propose, Respond, CancelBorders, EndTurn, Wake, Upgrade,
+    BuyFaith,   // A=city: finish the current project with faith
+    BuyTile,    // A=city, B=tile
+    Gift,       // A=player, B=0 gold / 1 favor, C=amount
+    Vote,       // A=candidate, B=favor to spend
 }
 
 public enum EventKind : byte
@@ -34,6 +38,7 @@ public enum EventKind : byte
     Proposal,        // A=from, B=kind
     TurnStarted,     // A=turn
     Info,            // S=text
+    Congress,        // A=new chair (-1 none), B=votes
 }
 
 public enum ProposalKind : byte { Peace, OpenBorders }
@@ -53,11 +58,13 @@ public sealed class GameSettings : IWire
 {
     public string Name = "Новая игра";
     public int MapW = 56, MapH = 36, AiCount = 2, MaxPlayers = 4, TurnTimerSec = 0, Seed = 0;
+    /// <summary>0 = one continent, 1 = two continents, 2 = archipelago.</summary>
+    public int MapType;
     public bool Simultaneous = true;
     public void Sync(Wire w)
     {
         w.S(ref Name); w.I(ref MapW); w.I(ref MapH); w.I(ref AiCount); w.I(ref MaxPlayers);
-        w.I(ref TurnTimerSec); w.I(ref Seed); w.B(ref Simultaneous);
+        w.I(ref TurnTimerSec); w.I(ref Seed); w.B(ref Simultaneous); w.I(ref MapType);
     }
 }
 
@@ -201,6 +208,11 @@ public sealed class MeDto : IWire
 {
     public int Gold, GoldRate, SciRate, Slider, ResearchProgress, EchoBonus;
     public int Income, UnitUpkeep, BuildingUpkeep, CityMaint, RoadUpkeep, StrainCost;
+    public int Faith, FaithRate, Favor, FavorRate, Luxuries, Chair = -1, CongressIn;
+    /// <summary>Resources this empire has connected (improved inside its borders).</summary>
+    public int[] Resources = Array.Empty<int>();
+    /// <summary>Votes cast so far in the current congress session, indexed by player id.</summary>
+    public int[] Votes = Array.Empty<int>();
     public string Research = "";
     public string[] Known = Array.Empty<string>();
     public int[] Future = new int[4];
@@ -215,6 +227,8 @@ public sealed class MeDto : IWire
         w.S(ref Research); w.SA(ref Known); w.IA(ref Future);
         w.F(ref Itr); w.F(ref Pressure); w.F(ref Lag); w.F(ref SciMult); w.F(ref CulMult); w.F(ref UpkeepMult); w.F(ref Sprawl);
         w.A(ref Available); w.A(ref Proposals); w.A(ref Demo);
+        w.I(ref Faith); w.I(ref FaithRate); w.I(ref Favor); w.I(ref FavorRate); w.I(ref Luxuries); w.I(ref Chair); w.I(ref CongressIn);
+        w.IA(ref Resources); w.IA(ref Votes);
     }
 }
 

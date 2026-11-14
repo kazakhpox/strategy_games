@@ -43,6 +43,8 @@ public sealed class City
     public string Name = "";
     public bool Capital;
     public List<string> Queue = new();
+    /// <summary>Tiles bought with gold; they stay with the city regardless of its cultural radius.</summary>
+    public List<int> ExtraTiles = new();
     public HashSet<string> Buildings = new();
     // derived each refresh
     public List<int> Worked = new();
@@ -62,6 +64,11 @@ public sealed class Player
     public int[] Future = new int[4];
     public long TechPoints;
     public double SciFrac;
+    public int Faith, Favor, Luxuries;
+    public double FaithRate, FavorRate;
+    /// <summary>Resources connected by this empire (derived every refresh).</summary>
+    public List<int> Resources = new();
+    public bool HasResource(Resource r) => r == Resource.None || Resources.Contains((int)r);
     /// <summary>Handicap: multiplier on production and commerce (1 = normal). Used for AI difficulty and balance experiments.</summary>
     public double Bonus = 1;
     public bool Connected = true;
@@ -94,6 +101,9 @@ public sealed class GameState
     public List<Player> Players = new();
     public Dictionary<int, Relation> Relations = new();
     public List<Proposal> Proposals = new();
+    /// <summary>World congress: favor spent per candidate this session, and the current chair.</summary>
+    public Dictionary<int, int> Votes = new();
+    public int Chair = -1;
 }
 
 public sealed class GameEvent

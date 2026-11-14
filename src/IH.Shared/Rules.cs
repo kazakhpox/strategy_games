@@ -2,9 +2,29 @@ namespace IH.Shared;
 
 public enum Terrain : byte { Ocean, Coast, Grassland, Plains, Desert, Tundra, Snow }
 public enum Relief : byte { Flat, Hills, Mountain }
-public enum Resource : byte { None, Wheat, Cattle, Fish, Iron, Horses, Gold, Stone, Oil, Uranium }
-public enum Improvement : byte { None, Farm, Mine, Cottage }
-public enum WorkKind : byte { None, Farm, Mine, Cottage, Road }
+public enum Resource : byte
+{
+    None,
+    // bonus
+    Bananas, Stone, Crabs, Maize, Copper, Sheep, Deer, Wheat, Rice, Fish, Cattle,
+    // strategic (hidden until the revealing technology is known)
+    Horses, Iron, Niter, Coal, Oil, Aluminium, Uranium,
+    // luxury (each distinct improved luxury makes every city happier)
+    Incense, Wine, Cocoa, Coffee, Dyes, Olives, Spices, Sugar, Tobacco, Cotton, Citrus, Tea, Silk,
+    Diamonds, Gypsum, Jade, Mercury, Silver, Salt, Amber,
+    Furs, Ivory, Truffles,
+    Pearls, Whales, Turtles,
+    Marble, Cloves, Cinnamon, Honey,
+}
+public enum ResClass : byte { None, Bonus, Strategic, Luxury }
+/// <summary>Tile improvements. WorkKind uses the same numbers plus Road.</summary>
+public enum Improvement : byte { None, Farm, Mine, Cottage, Plantation, Quarry, Pasture, Camp, FishingBoats, OilWell }
+public enum WorkKind : byte { None, Farm, Mine, Cottage, Plantation, Quarry, Pasture, Camp, FishingBoats, OilWell, Road }
+
+public sealed record ResDef(Resource Id, string Name, ResClass Class, int F, int P, int C, WorkKind Imp, string? Reveal = null);
+
+/// <summary>What a unit is able to cross; decides movement cost and passability.</summary>
+public readonly record struct Mover(bool Sea, bool Coast, bool Ocean);
 public enum UnitRole : byte { Military, Settler, Worker, Scout }
 
 /// <summary>Static tile data; identical representation on server and client.</summary>
@@ -23,7 +43,9 @@ public struct TileData
     public const ulong VisibleBit = 1UL << 63;
 
     public readonly bool IsWater => Terrain <= Terrain.Coast;
+    /// <summary>Walkable land.</summary>
     public readonly bool Passable => !IsWater && Relief != Relief.Mountain;
+    public const ulong ResourceMask = 63UL << 6;
 
     public readonly ulong Pack()
     {
@@ -31,10 +53,10 @@ public struct TileData
         p |= (ulong)Relief << 3;
         p |= (Forest ? 1UL : 0) << 5;
         p |= (ulong)Resource << 6;
-        p |= (ulong)Improvement << 10;
-        p |= (Road ? 1UL : 0) << 12;
-        p |= (ulong)(Owner + 1) << 13;
-        p |= (ulong)(CityId + 1) << 20;
+        p |= (ulong)Improvement << 12;
+        p |= (Road ? 1UL : 0) << 16;
+        p |= (ulong)(Owner + 1) << 17;
+        p |= (ulong)(CityId + 1) << 24;
         return p;
     }
 
@@ -43,25 +65,29 @@ public struct TileData
         Terrain = (Terrain)(p & 7),
         Relief = (Relief)((p >> 3) & 3),
         Forest = ((p >> 5) & 1) != 0,
-        Resource = (Resource)((p >> 6) & 15),
-        Improvement = (Improvement)((p >> 10) & 3),
-        Road = ((p >> 12) & 1) != 0,
-        Owner = (int)((p >> 13) & 127) - 1,
-        CityId = (int)((p >> 20) & 0xFFFFFF) - 1,
+        Resource = (Resource)((p >> 6) & 63),
+        Improvement = (Improvement)((p >> 12) & 15),
+        Road = ((p >> 16) & 1) != 0,
+        Owner = (int)((p >> 17) & 127) - 1,
+        CityId = (int)((p >> 24) & 0xFFFFFF) - 1,
     };
 }
 
 public sealed record UnitDef(string Id, string Name, int Cost, int Str, int Moves, string? Tech,
-    UnitRole Role = UnitRole.Military, int Sight = 1, int CityDefPct = 0);
+    UnitRole Role = UnitRole.Military, int Sight = 1, int CityDefPct = 0, bool Sea = false, Resource Needs = Resource.None);
 
 public sealed record BuildingDef(string Id, string Name, int Cost, string? Tech)
 {
+    public bool Coastal;
+    public int Faith;
     public int Food, Commerce, ProdPct, SciPct, GoldPct, Culture, CulPct, Happy, DefPct, Upkeep, Calm, MaintCutPct;
     public string Describe()
     {
         var p = new List<string>();
         if (Food != 0) p.Add($"+{Food} пищи");
         if (Commerce != 0) p.Add($"+{Commerce} коммерции");
+        if (Faith != 0) p.Add($"+{Faith} веры");
+        if (Coastal) p.Add("только в прибрежном городе");
         if (ProdPct != 0) p.Add($"+{ProdPct}% производства");
         if (SciPct != 0) p.Add($"+{SciPct}% науки");
         if (GoldPct != 0) p.Add($"+{GoldPct}% золота");
@@ -86,6 +112,9 @@ public static class Rules
     public const int MinCityDistance = 3;
     public const int MaxQueue = 8;
     public const string Wealth = "p:wealth";
+    public const int CongressPeriod = 30;
+    public static int FaithPrice(int cost, int prod) => Math.Max(0, cost - prod) * 2;
+    public static int TilePrice(int distance, int ownedTiles) => 25 + 15 * distance + ownedTiles / 2;
 
     public static readonly string[] EraNames =
     {
@@ -124,21 +153,30 @@ public static class Rules
         new("warrior", "Воин", 15, 2, 1, null),
         new("archer", "Лучник", 25, 3, 1, "archery", CityDefPct: 50),
         new("spearman", "Копейщик", 35, 4, 1, "bronze_working"),
-        new("swordsman", "Мечник", 45, 6, 1, "iron_working"),
-        new("horseman", "Всадник", 50, 6, 2, "horseback"),
+        new("swordsman", "Мечник", 45, 6, 1, "iron_working", Needs: Resource.Iron),
+        new("horseman", "Всадник", 50, 6, 2, "horseback", Needs: Resource.Horses),
         new("longbowman", "Длинный лучник", 60, 6, 1, "feudalism", CityDefPct: 50),
-        new("knight", "Рыцарь", 90, 10, 2, "guilds"),
-        new("musketman", "Мушкетёр", 100, 9, 1, "gunpowder", CityDefPct: 25),
+        new("knight", "Рыцарь", 90, 10, 2, "guilds", Needs: Resource.Horses),
+        new("musketman", "Мушкетёр", 100, 9, 1, "gunpowder", CityDefPct: 25, Needs: Resource.Niter),
         new("rifleman", "Стрелок", 140, 14, 1, "rifling", CityDefPct: 25),
-        new("cavalry", "Кавалерия", 150, 15, 2, "military_tradition"),
+        new("cavalry", "Кавалерия", 150, 15, 2, "military_tradition", Needs: Resource.Horses),
         new("infantry", "Пехота", 200, 20, 1, "assembly_line", CityDefPct: 25),
-        new("tank", "Танк", 260, 28, 2, "industrialism"),
-        new("mech_infantry", "Мотопехота", 320, 32, 2, "robotics", CityDefPct: 25),
+        new("tank", "Танк", 260, 28, 2, "combined_arms", Needs: Resource.Oil),
+        new("mech_infantry", "Мотопехота", 320, 32, 2, "robotics", CityDefPct: 25, Needs: Resource.Aluminium),
         new("nano_trooper", "Нанодесант", 420, 42, 2, "f0_1", CityDefPct: 25),
+        // ---- navy
+        new("work_boat", "Рыбацкое судно", 30, 0, 3, "sailing", UnitRole.Worker, Sea: true),
+        new("galley", "Галера", 45, 3, 3, "sailing", Sea: true),
+        new("caravel", "Каравелла", 110, 8, 4, "astronomy", Sight: 2, Sea: true),
+        new("frigate", "Фрегат", 160, 13, 4, "military_tradition", Sea: true, Needs: Resource.Niter),
+        new("ironclad", "Броненосец", 220, 19, 4, "steam_power", Sea: true, Needs: Resource.Coal),
+        new("destroyer", "Эсминец", 280, 26, 5, "refining", Sight: 2, Sea: true, Needs: Resource.Oil),
+        new("battleship", "Линкор", 360, 36, 4, "combined_arms", Sea: true, Needs: Resource.Oil),
+        new("missile_cruiser", "Ракетный крейсер", 440, 46, 5, "robotics", Sight: 2, Sea: true, Needs: Resource.Aluminium),
     };
 
     /// <summary>Best unit this one can be upgraded to (same mobility class, stronger, tech known); -1 if none.</summary>
-    public static int UpgradeTarget(int type, Func<string?, bool> knows)
+    public static int UpgradeTarget(int type, Func<string?, bool> knows, Func<Resource, bool>? has = null)
     {
         var d = Units[type];
         if (d.Role != UnitRole.Military) return -1;
@@ -146,7 +184,7 @@ public static class Rules
         for (int i = 0; i < Units.Length; i++)
         {
             var u = Units[i];
-            if (u.Role == UnitRole.Military && u.Moves == d.Moves && u.Str > d.Str && knows(u.Tech) && (best < 0 || u.Str > Units[best].Str))
+            if (u.Role == UnitRole.Military && u.Sea == d.Sea && (d.Sea || u.Moves == d.Moves) && u.Str > d.Str && knows(u.Tech) && (u.Needs == Resource.None || has == null || has(u.Needs)) && (best < 0 || u.Str > Units[best].Str))
                 best = i;
         }
         return best;
@@ -159,12 +197,14 @@ public static class Rules
     // ------------------------------------------------------------ buildings
     public static readonly BuildingDef[] Buildings =
     {
-        new("palace", "Дворец", 0, null) { Commerce = 6, Culture = 2, Happy = 1, Calm = 2 },
+        new("palace", "Дворец", 0, null) { Commerce = 6, Culture = 2, Happy = 1, Calm = 2, Faith = 1 },
+        new("shrine", "Святилище", 40, "mysticism") { Faith = 2 },
         new("monument", "Монумент", 30, "mysticism") { Culture = 2 },
         new("granary", "Амбар", 60, "pottery") { Food = 2, Upkeep = 1 },
         new("walls", "Стены", 50, "masonry") { DefPct = 50 },
         new("library", "Библиотека", 90, "writing") { SciPct = 25, Culture = 1, Upkeep = 1 },
-        new("temple", "Храм", 80, "priesthood") { Happy = 1, Culture = 1, Calm = 1, Upkeep = 1 },
+        new("temple", "Храм", 80, "priesthood") { Happy = 1, Culture = 1, Calm = 1, Upkeep = 1, Faith = 3 },
+        new("harbor", "Гавань", 100, "sailing") { Food = 1, GoldPct = 25, Upkeep = 1, Coastal = true },
         new("market", "Рынок", 120, "currency") { GoldPct = 25, Happy = 1, Upkeep = 1 },
         new("forge", "Кузница", 120, "metal_casting") { ProdPct = 25, Upkeep = 1 },
         new("courthouse", "Суд", 120, "code_of_laws") { MaintCutPct = 50, Calm = 2, Upkeep = 1 },
@@ -176,7 +216,13 @@ public static class Rules
         new("factory", "Фабрика", 250, "assembly_line") { ProdPct = 25, Upkeep = 2 },
         new("power_plant", "Электростанция", 280, "electricity") { ProdPct = 25, Upkeep = 2 },
         new("broadcast", "Радиовышка", 220, "radio") { CulPct = 50, Happy = 1, Calm = 1, Upkeep = 2 },
+        new("cathedral", "Собор", 180, "philosophy") { Faith = 4, Culture = 2, Happy = 1, Upkeep = 2 },
+        new("stock_exchange", "Биржа", 260, "economics") { GoldPct = 25, Upkeep = 2 },
+        new("shipyard", "Верфь", 240, "steam_power") { ProdPct = 15, GoldPct = 15, Upkeep = 2, Coastal = true },
+        new("stadium", "Стадион", 300, "radio") { Happy = 3, Calm = 1, Upkeep = 2 },
         new("laboratory", "Лаборатория", 300, "computers") { SciPct = 25, Upkeep = 2 },
+        new("hospital", "Больница", 320, "genetics") { Food = 3, Happy = 1, Upkeep = 2 },
+        new("fusion_plant", "Термоядерная станция", 420, "fusion") { ProdPct = 35, Upkeep = 3 },
         new("nanoforge", "Нанокузня", 500, "f0_1") { ProdPct = 50, Upkeep = 3 },
         new("orbital_hub", "Орбитальный хаб", 500, "f1_1") { GoldPct = 50, Upkeep = 3 },
         new("quantum_lab", "Квантовая лаборатория", 500, "f2_1") { SciPct = 50, Upkeep = 3 },
@@ -191,7 +237,7 @@ public static class Rules
     public static readonly TechDef[] Techs =
     {
         T("agriculture", "Земледелие", 25, 0), T("mining", "Горное дело", 30, 0), T("hunting", "Охота", 25, 0),
-        T("mysticism", "Мистицизм", 30, 0), T("wheel", "Колесо", 40, 0),
+        T("mysticism", "Мистицизм", 30, 0), T("wheel", "Колесо", 40, 0), T("sailing", "Мореходство", 40, 0),
         T("pottery", "Гончарное дело", 40, 0, "agriculture"), T("archery", "Стрельба из лука", 40, 0, "hunting"),
         T("animal_husbandry", "Животноводство", 50, 0, "agriculture"),
         T("bronze_working", "Обработка бронзы", 60, 0, "mining"), T("masonry", "Каменная кладка", 50, 0, "mining"),
@@ -223,9 +269,11 @@ public static class Rules
         T("rifling", "Нарезное оружие", 1300, 4, "gunpowder", "steam_power"),
         T("electricity", "Электричество", 1500, 4, "scientific_method"),
         T("assembly_line", "Конвейер", 1700, 4, "steam_power", "economics"),
+        T("refining", "Переработка нефти", 1600, 4, "steam_power"),
 
         T("industrialism", "Индустриализация", 2200, 5, "assembly_line", "electricity"),
         T("radio", "Радио", 2000, 5, "electricity"),
+        T("combined_arms", "Комбинированное оружие", 2600, 5, "industrialism", "radio", "refining"),
         T("computers", "Компьютеры", 2800, 5, "radio"),
         T("robotics", "Робототехника", 3400, 5, "computers", "industrialism"),
 
@@ -288,6 +336,48 @@ public static class Rules
     }
 
     // ---------------------------------------------------------------- tiles
+    private static ResDef B(Resource id, string name, int f, int p, int c, WorkKind imp) => new(id, name, ResClass.Bonus, f, p, c, imp);
+    private static ResDef St(Resource id, string name, string reveal, WorkKind imp) => new(id, name, ResClass.Strategic, 0, 1, 0, imp, reveal);
+    private static ResDef Lx(Resource id, string name, WorkKind imp) => new(id, name, ResClass.Luxury, 0, 0, 1, imp);
+
+    /// <summary>Indexed by <see cref="Resource"/>.</summary>
+    public static readonly ResDef[] Resources =
+    {
+        new(Resource.None, "", ResClass.None, 0, 0, 0, WorkKind.None),
+        B(Resource.Bananas, "Бананы", 1, 0, 0, WorkKind.Plantation), B(Resource.Stone, "Камень", 0, 1, 0, WorkKind.Quarry),
+        B(Resource.Crabs, "Крабы", 0, 0, 2, WorkKind.FishingBoats), B(Resource.Maize, "Кукуруза", 0, 0, 2, WorkKind.Farm),
+        B(Resource.Copper, "Медь", 0, 0, 2, WorkKind.Mine), B(Resource.Sheep, "Овцы", 1, 0, 0, WorkKind.Pasture),
+        B(Resource.Deer, "Олени", 0, 1, 0, WorkKind.Camp), B(Resource.Wheat, "Пшеница", 1, 0, 0, WorkKind.Farm),
+        B(Resource.Rice, "Рис", 1, 0, 0, WorkKind.Farm), B(Resource.Fish, "Рыба", 1, 0, 0, WorkKind.FishingBoats),
+        B(Resource.Cattle, "Скот", 1, 0, 0, WorkKind.Pasture),
+        St(Resource.Horses, "Лошади", "animal_husbandry", WorkKind.Pasture), St(Resource.Iron, "Железо", "bronze_working", WorkKind.Mine),
+        St(Resource.Niter, "Селитра", "gunpowder", WorkKind.Mine), St(Resource.Coal, "Уголь", "industrialism", WorkKind.Mine),
+        St(Resource.Oil, "Нефть", "refining", WorkKind.OilWell), St(Resource.Aluminium, "Алюминий", "radio", WorkKind.Mine),
+        St(Resource.Uranium, "Уран", "combined_arms", WorkKind.Mine),
+        Lx(Resource.Incense, "Благовония", WorkKind.Plantation), Lx(Resource.Wine, "Вино", WorkKind.Plantation),
+        Lx(Resource.Cocoa, "Какао", WorkKind.Plantation), Lx(Resource.Coffee, "Кофе", WorkKind.Plantation),
+        Lx(Resource.Dyes, "Красители", WorkKind.Plantation), Lx(Resource.Olives, "Оливки", WorkKind.Plantation),
+        Lx(Resource.Spices, "Пряности", WorkKind.Plantation), Lx(Resource.Sugar, "Сахар", WorkKind.Plantation),
+        Lx(Resource.Tobacco, "Табак", WorkKind.Plantation), Lx(Resource.Cotton, "Хлопок", WorkKind.Plantation),
+        Lx(Resource.Citrus, "Цитрусовые", WorkKind.Plantation), Lx(Resource.Tea, "Чай", WorkKind.Plantation),
+        Lx(Resource.Silk, "Шёлк", WorkKind.Plantation),
+        Lx(Resource.Diamonds, "Алмазы", WorkKind.Mine), Lx(Resource.Gypsum, "Гипс", WorkKind.Mine), Lx(Resource.Jade, "Нефрит", WorkKind.Mine),
+        Lx(Resource.Mercury, "Ртуть", WorkKind.Mine), Lx(Resource.Silver, "Серебро", WorkKind.Mine), Lx(Resource.Salt, "Соль", WorkKind.Mine),
+        Lx(Resource.Amber, "Янтарь", WorkKind.Mine),
+        Lx(Resource.Furs, "Меха", WorkKind.Camp), Lx(Resource.Ivory, "Слоновая кость", WorkKind.Camp), Lx(Resource.Truffles, "Трюфели", WorkKind.Camp),
+        Lx(Resource.Pearls, "Жемчуг", WorkKind.FishingBoats), Lx(Resource.Whales, "Киты", WorkKind.FishingBoats),
+        Lx(Resource.Turtles, "Черепахи", WorkKind.FishingBoats),
+        Lx(Resource.Marble, "Мрамор", WorkKind.Quarry), Lx(Resource.Cloves, "Гвоздика", WorkKind.Plantation),
+        Lx(Resource.Cinnamon, "Корица", WorkKind.Plantation), Lx(Resource.Honey, "Мёд", WorkKind.Pasture),
+    };
+
+    public static ResDef Res(Resource r) => Resources[(int)r < Resources.Length ? (int)r : 0];
+
+    public static bool ResourceVisible(Resource r, Func<string?, bool> knows) => Res(r).Reveal == null || knows(Res(r).Reveal);
+
+    /// <summary>True when the tile's resource is connected: it carries the improvement that resource needs.</summary>
+    public static bool ResourceWorked(in TileData t) => t.Resource != Resource.None && (int)t.Improvement == (int)Res(t.Resource).Imp;
+
     public static (int f, int p, int c) TileYield(in TileData t, bool cityCenter = false)
     {
         if (t.Relief == Relief.Mountain) return (0, 0, 0);
@@ -302,67 +392,92 @@ public static class Rules
         }
         if (t.Relief == Relief.Hills) { f = Math.Max(0, f - 1); p += 1; }
         if (t.Forest) p += 1;
-        switch (t.Resource)
-        {
-            case Resource.Wheat: f += 2; break;
-            case Resource.Cattle: f += 1; p += 1; break;
-            case Resource.Fish: f += 2; break;
-            case Resource.Iron: p += 2; break;
-            case Resource.Horses: p += 1; c += 1; break;
-            case Resource.Gold: c += 3; break;
-            case Resource.Stone: p += 2; break;
-            case Resource.Oil: p += 2; c += 1; break;
-            case Resource.Uranium: p += 1; c += 2; break;
-        }
+        var rd = Res(t.Resource);
+        f += rd.F; p += rd.P; c += rd.C;
         switch (t.Improvement)
         {
             case Improvement.Farm: f += 1; break;
             case Improvement.Mine: p += 2; break;
             case Improvement.Cottage: c += 2; break;
+            case Improvement.Plantation: c += 1; break;
+            case Improvement.Quarry: p += 1; break;
+            case Improvement.Pasture: p += 1; break;
+            case Improvement.Camp: c += 1; break;
+            case Improvement.FishingBoats: f += 1; break;
+            case Improvement.OilWell: p += 2; break;
+        }
+        if (ResourceWorked(t))
+        {
+            // a connected resource yields its bonus twice; luxuries are also traded
+            f += rd.F; p += rd.P; c += rd.C;
+            if (rd.Class == ResClass.Luxury) c += 2;
         }
         if (t.Road && !t.IsWater) c += 1;
         if (cityCenter) { f = Math.Max(f, 2); p = Math.Max(p, 2); c = Math.Max(c, 2); }
         return (f, p, c);
     }
 
-    /// <summary>Step cost in half-points; -1 when the destination terrain is impassable for land units.</summary>
-    public static int MoveCost(in TileData from, in TileData to)
+    public const int EmbarkCost = 100; // boarding or landing ends the unit's move
+
+    public static Mover MoverFor(UnitDef d, Func<string?, bool> knows) => new(d.Sea, knows("sailing"), knows("astronomy"));
+
+    /// <summary>Step cost in half-points; -1 when the unit cannot enter the destination at all.</summary>
+    public static int MoveCost(in TileData from, in TileData to, Mover m)
     {
-        if (!to.Passable) return -1;
+        if (to.Relief == Relief.Mountain) return -1;
+        if (m.Sea) return to.IsWater || to.CityId >= 0 ? MovePoint : -1; // ships dock in coastal cities
+        if (to.IsWater)
+        {
+            if (to.Terrain == Terrain.Coast ? !m.Coast : !m.Ocean) return -1;
+            return from.IsWater ? MovePoint : EmbarkCost;
+        }
+        if (from.IsWater) return EmbarkCost;
         if (from.Road && to.Road) return 1;
         return to.Relief == Relief.Hills || to.Forest ? 2 * MovePoint : MovePoint;
     }
 
     public static string? WorkTech(WorkKind k) => k switch
     {
-        WorkKind.Farm => "agriculture", WorkKind.Mine => "mining", WorkKind.Cottage => "pottery",
-        WorkKind.Road => "wheel", _ => null,
+        WorkKind.Farm => "agriculture", WorkKind.Mine => "mining", WorkKind.Cottage => "pottery", WorkKind.Road => "wheel",
+        WorkKind.Plantation => "pottery", WorkKind.Quarry => "masonry", WorkKind.Pasture => "animal_husbandry",
+        WorkKind.Camp => "hunting", WorkKind.FishingBoats => "sailing", WorkKind.OilWell => "refining", _ => null,
     };
 
-    public static int WorkTurns(WorkKind k) => k switch
-    {
-        WorkKind.Farm => 4, WorkKind.Mine => 5, WorkKind.Cottage => 4, WorkKind.Road => 2, _ => 0,
-    };
+    public static int WorkTurns(WorkKind k) => k switch { WorkKind.None => 0, WorkKind.Road => 2, WorkKind.OilWell => 6, WorkKind.Mine => 5, _ => 4 };
 
     public static string WorkName(WorkKind k) => k switch
     {
-        WorkKind.Farm => "Ферма", WorkKind.Mine => "Шахта", WorkKind.Cottage => "Посёлок", WorkKind.Road => "Дорога", _ => "",
+        WorkKind.Farm => "Ферма", WorkKind.Mine => "Рудник", WorkKind.Cottage => "Посёлок", WorkKind.Road => "Дорога",
+        WorkKind.Plantation => "Плантация", WorkKind.Quarry => "Каменоломня", WorkKind.Pasture => "Пастбище",
+        WorkKind.Camp => "Лагерь", WorkKind.FishingBoats => "Рыбацкие суда", WorkKind.OilWell => "Буровая вышка", _ => "",
     };
 
-    /// <summary>Whether the terrain itself allows the improvement (ownership and tech are checked by the server).</summary>
+    public static readonly WorkKind[] AllWork =
+    {
+        WorkKind.Farm, WorkKind.Mine, WorkKind.Cottage, WorkKind.Plantation, WorkKind.Quarry, WorkKind.Pasture,
+        WorkKind.Camp, WorkKind.FishingBoats, WorkKind.OilWell, WorkKind.Road,
+    };
+
+    /// <summary>
+    /// Whether the terrain allows the improvement. Pass the tile as the player sees it (hidden strategic
+    /// resources removed); ownership, technology and unit type are checked by the server.
+    /// </summary>
     public static bool WorkFits(in TileData t, WorkKind k)
     {
-        if (!t.Passable || t.CityId >= 0) return false;
+        if (t.CityId >= 0 || t.Relief == Relief.Mountain || k == WorkKind.None) return false;
+        if (k == WorkKind.Road) return !t.IsWater && !t.Road;
+        if ((int)t.Improvement == (int)k) return false;
+        bool forResource = t.Resource != Resource.None && Res(t.Resource).Imp == k;
+        if (t.IsWater) return forResource;
+        if (forResource) return true;
+        // generic improvements never replace the one a resource needs
+        if (ResourceWorked(t)) return false;
         switch (k)
         {
-            case WorkKind.Road: return !t.Road;
-            case WorkKind.Farm:
-                return !t.Forest && t.Relief == Relief.Flat && t.Improvement != Improvement.Farm
-                    && t.Terrain is Terrain.Grassland or Terrain.Plains;
-            case WorkKind.Mine: return !t.Forest && t.Relief == Relief.Hills && t.Improvement != Improvement.Mine;
+            case WorkKind.Farm: return !t.Forest && t.Relief == Relief.Flat && t.Terrain is Terrain.Grassland or Terrain.Plains;
+            case WorkKind.Mine: return !t.Forest && t.Relief == Relief.Hills;
             case WorkKind.Cottage:
-                return !t.Forest && t.Relief == Relief.Flat && t.Improvement != Improvement.Cottage
-                    && t.Terrain is Terrain.Grassland or Terrain.Plains or Terrain.Desert or Terrain.Tundra;
+                return !t.Forest && t.Relief == Relief.Flat && t.Terrain is Terrain.Grassland or Terrain.Plains or Terrain.Desert or Terrain.Tundra;
             default: return false;
         }
     }

@@ -108,7 +108,7 @@ public sealed class Wire
 /// <summary>Message framing: [type:1][flags:1][payload]. Large payloads are deflate-compressed.</summary>
 public static class Codec
 {
-    public const int ProtocolVersion = 1;
+    public const int ProtocolVersion = 2;
     public const string ConnectionKey = "InfiniteHorizons/1";
     private const int CompressThreshold = 400;
 

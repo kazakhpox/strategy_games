@@ -219,8 +219,14 @@ public class GameTests
         var warrior = g.UnitsOf(0).First(u => u.Def.Id == "warrior");
         Assert.NotNull(Cmd(g, 0, CmdType.Upgrade, warrior.Id));                 // nothing better is known yet
         g.P(0).Known.Add("bronze_working"); g.P(0).Known.Add("iron_working");
-        int to = Rules.UpgradeTarget(warrior.Type, g.P(0).Has);
+        // without iron the best the warrior can become is a spearman
+        Assert.Equal("spearman", Rules.Units[Rules.UpgradeTarget(warrior.Type, g.P(0).Has, g.P(0).HasResource)].Id);
+        g.P(0).Resources.Add((int)Resource.Iron);
+        int to = Rules.UpgradeTarget(warrior.Type, g.P(0).Has, g.P(0).HasResource);
         Assert.Equal("swordsman", Rules.Units[to].Id);                           // best same-speed unit, not the horseman
+        // keep the iron connected through the economy refresh that every command triggers
+        var capTile = g.CitiesOf(0).Single().Tile;
+        g.S.Tiles[capTile].Resource = Resource.Iron;
         g.P(0).Gold = 5;
         Assert.NotNull(Cmd(g, 0, CmdType.Upgrade, warrior.Id));                 // too poor
         g.P(0).Gold = 500;
@@ -231,6 +237,153 @@ public class GameTests
         Assert.Equal(0, warrior.Moves);
         Assert.NotNull(Cmd(g, 0, CmdType.Upgrade, warrior.Id));                 // already the best
         Assert.Equal(-1, Rules.UpgradeTarget(Rules.UnitIndex("settler"), _ => true));
+    }
+
+    [Fact]
+    public void Resources_strategic_are_hidden_luxuries_make_cities_happy()
+    {
+        var g = New(2, 0);
+        Assert.Null(Cmd(g, 0, CmdType.FoundCity, g.UnitsOf(0).First(u => u.Def.Role == UnitRole.Settler).Id));
+        var city = g.CitiesOf(0).Single();
+        var p = g.P(0);
+        var spots = g.Grid.Nb[city.Tile].Where(t => g.S.Tiles[t].Passable).ToList();
+        int ironTile = spots[0], silkTile = spots[1];
+        ref var it = ref g.S.Tiles[ironTile]; it.Resource = Resource.Iron; it.Forest = false; it.Relief = Relief.Hills; it.Improvement = Improvement.None;
+        ref var st = ref g.S.Tiles[silkTile]; st.Resource = Resource.Silk; st.Improvement = Improvement.None;
+
+        // fog-of-war level secrecy: the client is not told about iron before bronze working
+        g.BuildView(0);
+        Assert.Equal(Resource.None, TileData.Unpack(p.KnownTiles[ironTile]).Resource);
+        Assert.Equal(Resource.Silk, TileData.Unpack(p.KnownTiles[silkTile]).Resource);
+        g.Learn(p, Rules.Tech("bronze_working")!);
+        Assert.Equal(Resource.Iron, TileData.Unpack(p.KnownTiles[ironTile]).Resource);
+
+        // units that need iron cannot be built until it is mined
+        p.Known.Add("iron_working"); p.Known.Add("mining"); p.Known.Add("pottery");
+        Assert.NotNull(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:swordsman"));
+        int happyBefore = city.Happy;
+        var worker = g.AddUnit(0, Rules.UnitIndex("worker"), ironTile);
+        Assert.NotNull(Cmd(g, 0, CmdType.Work, worker.Id, (int)WorkKind.Plantation));   // wrong improvement for iron
+        Assert.Null(Cmd(g, 0, CmdType.Work, worker.Id, (int)WorkKind.Mine));
+        var worker2 = g.AddUnit(0, Rules.UnitIndex("worker"), silkTile);
+        Assert.Null(Cmd(g, 0, CmdType.Work, worker2.Id, (int)WorkKind.Plantation));
+        for (int i = 0; i < 6; i++) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
+        Assert.Equal(Improvement.Mine, g.S.Tiles[ironTile].Improvement);
+        Assert.Equal(Improvement.Plantation, g.S.Tiles[silkTile].Improvement);
+        g.RefreshEconomy(p);
+        Assert.True(p.HasResource(Resource.Iron));
+        Assert.Equal(1, p.Luxuries);
+        Assert.Equal(happyBefore + 1, city.Happy);
+        Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:swordsman"));
+        // a connected luxury tile is worth more than the bare one
+        var bare = g.S.Tiles[silkTile]; bare.Improvement = Improvement.None;
+        Assert.True(Rules.TileYield(g.S.Tiles[silkTile]).c > Rules.TileYield(bare).c);
+        Assert.All(Enum.GetValues<Resource>(), r => Assert.Equal(r, Rules.Res(r).Id));
+    }
+
+    [Fact]
+    public void Ships_sail_land_units_embark_and_boats_work_the_sea()
+    {
+        var g = New(2, 0, seed: 21);
+        var p = g.P(0);
+        // found a city on the coast
+        int coastLand = Enumerable.Range(0, g.Grid.Count).First(t => g.CanFoundAt(0, t) && g.Grid.Nb[t].Any(n => g.S.Tiles[n].IsWater));
+        var settler = g.AddUnit(0, Rules.UnitIndex("settler"), coastLand);
+        foreach (var u in g.UnitsOf(0).Where(u => u.Id != settler.Id).ToList()) g.RemoveUnit(u);
+        Assert.Null(Cmd(g, 0, CmdType.FoundCity, settler.Id));
+        var city = g.CitiesOf(0).Single();
+        Assert.True(g.Coastal(city));
+        Assert.NotNull(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:galley"));       // no sailing yet
+        int water = g.Grid.Nb[city.Tile].First(n => g.S.Tiles[n].IsWater);
+
+        var warrior = g.AddUnit(0, Rules.UnitIndex("warrior"), city.Tile);
+        Assert.NotNull(Cmd(g, 0, CmdType.MoveUnit, warrior.Id, water));                 // cannot swim
+        p.Known.Add("sailing"); p.Known.Add("astronomy");
+        Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:galley"));
+        Assert.Null(Cmd(g, 0, CmdType.MoveUnit, warrior.Id, water));
+        Assert.Equal(water, warrior.Tile);
+        Assert.Equal(0, warrior.Moves);                                                 // embarking ends the move
+        Assert.True(g.Embarked(warrior));
+        Assert.True(g.DefenseStr(warrior) < g.UnitStr(warrior));
+
+        var galley = g.AddUnit(0, Rules.UnitIndex("galley"), city.Tile);
+        int farWater = g.Grid.Range(city.Tile, 3).First(t => g.S.Tiles[t].IsWater && g.Grid.Distance(city.Tile, t) >= 2
+                                                             && g.PathFor(galley, t) != null);
+        Assert.Null(Cmd(g, 0, CmdType.MoveUnit, galley.Id, farWater));
+        Assert.Equal(farWater, galley.Tile);
+        int inland = Enumerable.Range(0, g.Grid.Count).First(t => g.S.Tiles[t].Passable && g.S.Tiles[t].CityId < 0 && !g.Grid.Nb[t].Any(n => g.S.Tiles[n].IsWater));
+        Assert.NotNull(Cmd(g, 0, CmdType.MoveUnit, galley.Id, inland));                 // ships do not walk
+
+        // a fishing boat improves a sea resource; a land worker cannot
+        ref var sea = ref g.S.Tiles[water]; sea.Resource = Resource.Fish; sea.Improvement = Improvement.None;
+        Assert.Equal(0, sea.Owner);
+        var boat = g.AddUnit(0, Rules.UnitIndex("work_boat"), water);
+        Assert.NotNull(Cmd(g, 0, CmdType.Work, boat.Id, (int)WorkKind.Farm));
+        Assert.Null(Cmd(g, 0, CmdType.Work, boat.Id, (int)WorkKind.FishingBoats));
+        for (int i = 0; i < 5; i++) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
+        Assert.Equal(Improvement.FishingBoats, g.S.Tiles[water].Improvement);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Every_map_type_generates_and_is_playable_by_ai(int mapType)
+    {
+        var g = Simulation.Run(80, 4, 5, false, null, false, 1, mapType);
+        double land = g.S.Tiles.Count(t => !t.IsWater) / (double)g.S.Tiles.Length;
+        Assert.InRange(land, mapType == 2 ? 0.12 : 0.2, mapType == 2 ? 0.45 : 0.7);
+        Assert.All(g.Active, p => Assert.True(g.CitiesOf(p.Id).Any()));
+        Assert.True(g.S.Tiles.Count(t => t.Resource != Resource.None) > 60);
+        Assert.Contains(g.S.Tiles, t => Rules.Res(t.Resource).Class == ResClass.Luxury);
+        Assert.Contains(g.S.Tiles, t => t.IsWater && t.Resource != Resource.None);
+        // islands really are separate: on the archipelago the land splits into many pieces
+        if (mapType == 2) Assert.True(g.S.Tiles.Count(t => t.Terrain == Terrain.Coast) > g.S.Tiles.Count(t => !t.IsWater) / 2);
+    }
+
+    [Fact]
+    public void Faith_favor_congress_gifts_and_tile_purchase()
+    {
+        var g = New(2, 0);
+        foreach (int pid in new[] { 0, 1 }) Assert.Null(Cmd(g, pid, CmdType.FoundCity, g.UnitsOf(pid).First(u => u.Def.Role == UnitRole.Settler).Id));
+        var p = g.P(0); var city = g.CitiesOf(0).Single();
+        for (int i = 0; i < 3; i++) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
+        Assert.True(p.Faith > 0 && p.Favor > 0);                                        // palace faith, peace favor
+
+        // faith buys peaceful projects only
+        p.Faith = 1000;
+        Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:warrior"));
+        Assert.NotNull(Cmd(g, 0, CmdType.BuyFaith, city.Id));
+        Assert.Null(Cmd(g, 0, CmdType.SetProduction, city.Id, s: "u:worker"));
+        Assert.Null(Cmd(g, 0, CmdType.BuyFaith, city.Id));
+        Assert.True(p.Faith < 1000);
+
+        // buying land
+        int free = g.Grid.Range(city.Tile, 3).First(t => g.S.Tiles[t].Owner < 0 && g.Grid.Nb[t].Any(n => g.S.Tiles[n].Owner == 0));
+        p.Gold = 0;
+        Assert.NotNull(Cmd(g, 0, CmdType.BuyTile, city.Id, free));
+        p.Gold = 500;
+        Assert.Null(Cmd(g, 0, CmdType.BuyTile, city.Id, free));
+        Assert.Equal(0, g.S.Tiles[free].Owner);
+        Assert.NotNull(Cmd(g, 0, CmdType.BuyTile, city.Id, free));                      // already owned
+        Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn);
+        Assert.Equal(0, g.S.Tiles[free].Owner);                                         // survives the border recount
+
+        // gifts need contact; votes elect the chair
+        Assert.NotNull(Cmd(g, 0, CmdType.Gift, 1, 0, 50));
+        g.Rel(0, 1).Met = true;
+        int gold1 = g.P(1).Gold;
+        Assert.Null(Cmd(g, 0, CmdType.Gift, 1, 0, 50));
+        Assert.Equal(gold1 + 50, g.P(1).Gold);
+        Assert.NotNull(Cmd(g, 0, CmdType.Gift, 1, 1, 99999));
+        p.Favor = 40; g.P(1).Favor = 40;
+        Assert.Null(Cmd(g, 0, CmdType.Vote, 0, 30));
+        Assert.Null(Cmd(g, 1, CmdType.Vote, 1, 20));
+        Assert.NotNull(Cmd(g, 0, CmdType.Vote, 0, 30));                                 // only 10 left
+        while (g.S.Turn % Rules.CongressPeriod != 0) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
+        Assert.Equal(0, g.S.Chair);
+        Assert.Empty(g.S.Votes);
+        Assert.Contains(g.Events, e => e.Dto.Type == EventKind.Congress);
     }
 
     [Fact]

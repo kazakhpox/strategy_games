@@ -62,10 +62,11 @@ public sealed class ClientWorld
     public List<int>? PredictPath(UnitDto u, int target)
     {
         if (!Grid.Valid(target) || Vis[target] == 0) return null;
+        var mover = Rules.MoverFor(u.Def, Knows);
         return Grid.FindPath(u.Tile, target, (from, to) =>
         {
             if (Vis[to] == 0) return -1;
-            int c = Rules.MoveCost(Tiles[from], Tiles[to]);
+            int c = Rules.MoveCost(Tiles[from], Tiles[to], mover);
             if (c < 0) return -1;
             int owner = Tiles[to].Owner;
             if (owner >= 0 && owner != MyId && Players.TryGetValue(owner, out var p) && !p.AtWar && !p.OpenBorders && !p.Neutral)
@@ -102,6 +103,9 @@ public sealed class ClientWorld
             case EventKind.Proposal:
                 return $"«{PlayerName(e.A)}» предлагает: {(e.B == (int)ProposalKind.Peace ? "мир" : "открытые границы")}";
             case EventKind.Info: return e.S;
+            case EventKind.Congress:
+                return e.A < 0 ? "Всемирный конгресс: голосов не подано, председатель не избран"
+                    : $"Всемирный конгресс: председателем избран «{PlayerName(e.A)}» ({e.B} голосов) — +10% золота и культуры на {Rules.CongressPeriod} ходов";
             default: return null;
         }
     }
