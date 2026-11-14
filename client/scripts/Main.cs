@@ -64,6 +64,7 @@ public partial class Main : Control
             if (arg == "--autohost") _menu.AutoHost = true;
             if (arg.StartsWith("--port=")) _menu.SetAddress("127.0.0.1", arg[7..]);
             if (arg == "--steam") _menu.CallDeferred(nameof(MenuScreen.UseSteam));
+            if (arg.StartsWith("--maptype=") && int.TryParse(arg[10..], out int mt)) _menu.SetMapType(mt);
             if (arg == "--autojoin") _menu.AutoJoin = true;
             if (arg == "--hostsave") _menu.SelectLatestSave();
             if (arg == "--hostlocal") _menu.CallDeferred(nameof(MenuScreen.HostPressed));

@@ -48,6 +48,8 @@ public partial class MapView : Node3D
     private readonly Mesh _soldierMesh = new CylinderMesh { TopRadius = 0.2f, BottomRadius = 0.36f, Height = 0.62f, RadialSegments = 12 };
     private readonly Mesh _headMesh = new SphereMesh { Radius = 0.17f, Height = 0.34f, RadialSegments = 10, Rings = 5 };
     private readonly Mesh _civilMesh = new BoxMesh { Size = new Vector3(0.46f, 0.4f, 0.46f) };
+    private readonly Mesh _hullMesh = new BoxMesh { Size = new Vector3(0.36f, 0.24f, 0.95f) };
+    private readonly Mesh _sailMesh = new BoxMesh { Size = new Vector3(0.05f, 0.6f, 0.36f) };
     private readonly Mesh _ringMesh = new TorusMesh { InnerRadius = 0.5f, OuterRadius = 0.62f, Rings = 24, RingSegments = 6 };
     private readonly Mesh _houseMesh = new BoxMesh { Size = Vector3.One };
     private readonly StandardMaterial3D _ringMat = new() { AlbedoColor = new Color(1f, 0.85f, 0.25f), ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded };
@@ -269,6 +271,7 @@ public partial class MapView : Node3D
         _moveSeq[seq] = u.Id;
         if (!_units.TryGetValue(u.Id, out var v)) return;
         int moves = u.Moves, at = u.Tile, last = u.Tile;
+        var mover = Rules.MoverFor(u.Def, W.Knows);
         v.Path.Clear();
         foreach (int step in path)
         {
@@ -276,7 +279,7 @@ public partial class MapView : Node3D
             bool hostile = W.Units.Values.Any(o => o.Tile == step && o.Owner != W.MyId)
                            || (W.CityAt(step) is { } c && c.Owner != W.MyId);
             if (hostile) break; // the outcome of a fight is for the server to decide
-            moves -= Rules.MoveCost(W.Tiles[at], W.Tiles[step]);
+            moves -= Rules.MoveCost(W.Tiles[at], W.Tiles[step], mover);
             v.Path.Enqueue(Center(step));
             at = last = step;
         }
@@ -491,7 +494,11 @@ public partial class MapView : Node3D
         public Mesh? Commit() => Count == 0 ? null : _st.Commit();
     }
 
-    private static readonly int[] ResourceColor = { 0, 0xE8D060, 0xB07A50, 0x70C8E8, 0x9098A8, 0xC89060, 0xFFD700, 0xC8C8C8, 0x202020, 0x70E070 };
+    /// <summary>Marker colour by resource class: bonus green, strategic red, luxury violet.</summary>
+    public static Color ResourceColor(Resource r) => Rules.Res(r).Class switch
+    {
+        ResClass.Bonus => Ui.Col(0x7BD35A), ResClass.Strategic => Ui.Col(0xE0503C), _ => Ui.Col(0xC77BEA),
+    };
 
     private void RebuildChunk(Chunk ch)
     {
@@ -586,6 +593,31 @@ public partial class MapView : Node3D
                         decor.Pyramid(c + new Vector3(0.3f, 0, 0.35f), 0.2f, 0.28f, 4, Shade(Ui.Col(0x2E2E2E)));
                         decor.Box(c + new Vector3(0.05f, 0.08f, 0.4f), new Vector3(0.16f, 0.16f, 0.16f), Shade(Ui.Col(0x6A5038)));
                         break;
+                    case Improvement.Plantation:
+                        for (int i = -1; i <= 1; i++)
+                            for (int j = 0; j < 2; j++)
+                                decor.Pyramid(c + new Vector3(0.05f + i * 0.24f, 0, 0.32f + j * 0.2f), 0.09f, 0.16f, 5, Shade(Ui.Col(0x3FA34A)));
+                        break;
+                    case Improvement.Quarry:
+                        decor.Box(c + new Vector3(0.1f, 0.07f, 0.4f), new Vector3(0.34f, 0.14f, 0.26f), Shade(Ui.Col(0xB8B8B0)));
+                        decor.Box(c + new Vector3(0.36f, 0.05f, 0.22f), new Vector3(0.18f, 0.1f, 0.18f), Shade(Ui.Col(0x9A9A92)));
+                        break;
+                    case Improvement.Pasture:
+                        foreach (var (px, pz, sx, sz) in new[] { (0.1f, 0.2f, 0.6f, 0.04f), (0.1f, 0.6f, 0.6f, 0.04f), (-0.2f, 0.4f, 0.04f, 0.4f), (0.4f, 0.4f, 0.04f, 0.4f) })
+                            decor.Box(c + new Vector3(px, 0.07f, pz), new Vector3(sx, 0.1f, sz), Shade(Ui.Col(0x8A6A44)));
+                        break;
+                    case Improvement.Camp:
+                        decor.Pyramid(c + new Vector3(0.22f, 0, 0.4f), 0.2f, 0.26f, 4, Shade(Ui.Col(0xD8C49A)), Mathf.Pi / 4);
+                        break;
+                    case Improvement.FishingBoats:
+                        decor.Box(c + new Vector3(0.25f, 0.05f, 0.35f), new Vector3(0.3f, 0.08f, 0.12f), Shade(Ui.Col(0x7A5232)));
+                        decor.Box(c + new Vector3(-0.2f, 0.05f, 0.45f), new Vector3(0.12f, 0.08f, 0.28f), Shade(Ui.Col(0x7A5232)));
+                        decor.Box(c + new Vector3(0.25f, 0.2f, 0.35f), new Vector3(0.03f, 0.26f, 0.03f), Shade(Colors.White));
+                        break;
+                    case Improvement.OilWell:
+                        decor.Pyramid(c + new Vector3(0.25f, 0, 0.38f), 0.14f, 0.55f, 4, Shade(Ui.Col(0x2A2A2A)), Mathf.Pi / 4);
+                        decor.Box(c + new Vector3(0.25f, 0.04f, 0.38f), new Vector3(0.34f, 0.08f, 0.34f), Shade(Ui.Col(0x55504A)));
+                        break;
                     case Improvement.Cottage:
                         decor.Box(c + new Vector3(0.25f, 0.11f, 0.4f), new Vector3(0.3f, 0.22f, 0.26f), Shade(Ui.Col(0xE8D8B8)));
                         decor.Pyramid(c + new Vector3(0.25f, 0.22f, 0.4f), 0.27f, 0.2f, 4, Shade(Ui.Col(0xA04030)), Mathf.Pi / 4);
@@ -593,7 +625,7 @@ public partial class MapView : Node3D
                 }
                 if (t.Resource != Resource.None)
                 {
-                    var rc = Shade(Ui.Col(ResourceColor[(int)t.Resource]));
+                    var rc = Shade(ResourceColor(t.Resource));
                     var rp = c + new Vector3(-0.38f, 0.3f, -0.36f);
                     decor.Pyramid(rp, 0.15f, 0.2f, 4, rc);
                     decor.Pyramid(rp, 0.15f, -0.2f, 4, rc.Darkened(0.2f));
@@ -647,13 +679,25 @@ public partial class MapView : Node3D
             {
                 v.Type = u.Type; v.Owner = u.Owner;
                 bool civilian = u.Def.Role is UnitRole.Settler or UnitRole.Worker;
-                v.Body.Mesh = civilian ? _civilMesh : _soldierMesh;
-                v.Body.Position = new Vector3(0, civilian ? 0.2f : 0.31f, 0);
-                v.Head.Position = new Vector3(0, civilian ? 0.52f : 0.74f, 0);
-                v.Body.MaterialOverride = OwnerMat(u.Owner);
-                v.Head.MaterialOverride = civilian ? _wallMat : OwnerMat(u.Owner);
-                float s = 0.85f + Math.Min(0.5f, u.Def.Str / 60f);
-                v.Body.Scale = civilian ? Vector3.One : new Vector3(s, 1, s);
+                if (u.Def.Sea)
+                {
+                    // a hull with a sail in the owner's colour
+                    v.Body.Mesh = _hullMesh; v.Body.Position = new Vector3(0, 0.1f, 0); v.Body.MaterialOverride = _wallMat;
+                    float len = civilian ? 0.75f : 0.9f + Math.Min(0.5f, u.Def.Str / 70f);
+                    v.Body.Scale = new Vector3(1, 1, len);
+                    v.Head.Mesh = _sailMesh; v.Head.Position = new Vector3(0, 0.5f, 0); v.Head.MaterialOverride = OwnerMat(u.Owner);
+                }
+                else
+                {
+                    v.Body.Mesh = civilian ? _civilMesh : _soldierMesh;
+                    v.Body.Position = new Vector3(0, civilian ? 0.2f : 0.31f, 0);
+                    v.Head.Mesh = _headMesh;
+                    v.Head.Position = new Vector3(0, civilian ? 0.52f : 0.74f, 0);
+                    v.Body.MaterialOverride = OwnerMat(u.Owner);
+                    v.Head.MaterialOverride = civilian ? _wallMat : OwnerMat(u.Owner);
+                    float s = 0.85f + Math.Min(0.5f, u.Def.Str / 60f);
+                    v.Body.Scale = civilian ? Vector3.One : new Vector3(s, 1, s);
+                }
             }
             bool mine = u.Owner == W.MyId, selected = u.Id == SelectedUnit;
             v.Ring.Visible = selected;
@@ -663,6 +707,7 @@ public partial class MapView : Node3D
             if (u.Hp < 100) text += $"  {u.Hp}%";
             if (u.Fortified) text += " ▣";
             if (u.Work != 0) text += " ⚒";
+            if (!u.Def.Sea && W.Tiles[u.Tile].IsWater) text += " ⛵";
             v.Label.Text = text;
             bool ready = mine && u.Moves > 0 && !u.Fortified && u.Work == 0 && u.Goto < 0;
             v.Label.Modulate = selected ? Ui.Gold : u.Hp < 50 ? Ui.Bad : ready || !mine ? Colors.White : new Color(0.75f, 0.75f, 0.78f);

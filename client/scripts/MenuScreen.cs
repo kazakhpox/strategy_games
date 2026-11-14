@@ -10,7 +10,7 @@ public partial class MenuScreen : Control
     private readonly LineEdit _name = new(), _host = new(), _port = new(), _gameName = new() { Text = "Новая игра" };
     private readonly Label _status = Ui.Lbl("", 14, Ui.Bad);
     private readonly VBoxContainer _connectBox, _lobbyBox, _roomBox, _games = Ui.V(4), _slots = Ui.V(4);
-    private readonly OptionButton _mapSize = new(), _mode = new();
+    private readonly OptionButton _mapSize = new(), _mode = new(), _mapType = new();
     private readonly SpinBox _ai = new() { MinValue = 0, MaxValue = 8, Value = 2 }, _humans = new() { MinValue = 1, MaxValue = 8, Value = 4 },
         _timer = new() { MinValue = 0, MaxValue = 600, Step = 15, Value = 0, Suffix = " с" };
     private readonly Label _roomTitle = Ui.Lbl("", 18, Ui.Gold), _roomInfo = Ui.Lbl("", 13, Ui.Dim);
@@ -24,6 +24,7 @@ public partial class MenuScreen : Control
     private readonly VBoxContainer _lanBox, _steamBox, _steamGames = Ui.V(4);
     private readonly Label _steamStatus = Ui.Lbl("", 13, Ui.Dim);
     public bool AutoHost, AutoJoin;
+    public void SetMapType(int t) => _mapType.Selected = Mathf.Clamp(t, 0, 2);
     public void SelectLatestSave() { if (_saves.Count > 0) _hostSave.Selected = 1; }
 
     private static readonly (string label, int w, int h)[] Sizes =
@@ -94,13 +95,14 @@ public partial class MenuScreen : Control
         for (int i = 0; i < Sizes.Length; i++) _mapSize.AddItem(Sizes[i].label, i);
         _mapSize.Selected = 1;
         _mode.AddItem("Одновременные ходы", 0); _mode.AddItem("Ходы по очереди", 1);
+        _mapType.AddItem("Один континент", 0); _mapType.AddItem("Два континента", 1); _mapType.AddItem("Архипелаг (нужен флот)", 2);
         var gamesScroll = new ScrollContainer { CustomMinimumSize = new Vector2(0, 130) };
         gamesScroll.AddChild(_games);
         _games.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _lobbyBox = Ui.V(8,
             Ui.Lbl("Игры на сервере", 16, Ui.Gold), gamesScroll, new HSeparator(),
             Ui.Lbl("Создать игру", 16, Ui.Gold),
-            Row("Название", _gameName), Row("Карта", _mapSize), Row("Режим ходов", _mode),
+            Row("Название", _gameName), Row("Карта", _mapSize), Row("Тип карты", _mapType), Row("Режим ходов", _mode),
             Row("Мест для людей", _humans), Row("Противников-ИИ", _ai), Row("Таймер хода (0 — нет)", _timer),
             Ui.H(8, Ui.Btn("Создать", CreatePressed, size: 16), Ui.Btn("Отключиться", () => _main.Net.Disconnect())));
         root.AddChild(_lobbyBox);
@@ -246,7 +248,7 @@ public partial class MenuScreen : Control
         _main.Net.Send(MsgType.CreateGame, new GameSettings
         {
             Name = _gameName.Text, MapW = size.w, MapH = size.h, AiCount = (int)_ai.Value, MaxPlayers = (int)_humans.Value,
-            Simultaneous = _mode.Selected == 0, TurnTimerSec = (int)_timer.Value,
+            Simultaneous = _mode.Selected == 0, TurnTimerSec = (int)_timer.Value, MapType = _mapType.Selected,
         });
     }
 

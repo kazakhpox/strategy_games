@@ -19,6 +19,8 @@ public partial class GameScreen : Control
     public Minimap? Minimap;
     private readonly Main _main;
 
+    public readonly Sfx Sound = new();
+    private readonly Label _extra = Ui.Lbl("", 15, new Color(0.85f, 0.8f, 1f));
     private readonly Label _turn = Ui.Lbl("", 15), _gold = Ui.Lbl("", 15, Ui.Gold), _science = Ui.Lbl("", 15, Ui.Science),
         _itr = Ui.Lbl("", 15), _ping = Ui.Lbl("", 12, Ui.Dim), _timer = Ui.Lbl("", 18, Ui.Gold), _hover = Ui.Lbl("", 12, Ui.Dim),
         _toast = Ui.Lbl("", 18, Ui.Bad), _banner = Ui.Lbl("Связь потеряна, переподключение…", 20, Ui.Bad);
@@ -51,10 +53,18 @@ public partial class GameScreen : Control
         // the research label takes whatever width is left and is cut with an ellipsis, so the bar never outgrows the window
         _science.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _science.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
-        _science.CustomMinimumSize = new Vector2(120, 0);
-        var topRow = Ui.H(14, _turn, _gold, _itr, _science, _ping,
-            Ui.Btn("Наука F6", () => Toggle(Win.Science)), Ui.Btn("Экономика F2", () => Toggle(Win.Economy)),
-            Ui.Btn("Дипломатия F4", () => Toggle(Win.Diplomacy)), Ui.Btn("Демография F9", () => Toggle(Win.Demographics)),
+        _science.CustomMinimumSize = new Vector2(90, 0);
+        _itr.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        _itr.CustomMinimumSize = new Vector2(110, 0);
+        _itr.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _itr.SizeFlagsStretchRatio = 0.8f;
+        AddChild(Sound);
+        Sound.Muted = main.Setting("mute", "0") == "1";
+        _extra.MouseFilter = MouseFilterEnum.Stop;
+        _extra.TooltipText = "Вера — мирные покупки в городах. Одобрение — голоса во Всемирном конгрессе (окно дипломатии).";
+        var topRow = Ui.H(12, _turn, _gold, _extra, _itr, _science,
+            Ui.Btn("Наука", () => Toggle(Win.Science), "Наука и дерево технологий (F6)"), Ui.Btn("Экономика", () => Toggle(Win.Economy), "F2"),
+            Ui.Btn("Дипломатия", () => Toggle(Win.Diplomacy), "Дипломатия и Всемирный конгресс (F4)"), Ui.Btn("Демография", () => Toggle(Win.Demographics), "F9"),
             Ui.Btn("Выйти", () => Net.Send(MsgType.LeaveGame), "Покинуть игру. Место сохранится — вернуться можно из списка игр под тем же именем"));
         top.AddChild(topRow);
         _itr.MouseFilter = MouseFilterEnum.Stop;
@@ -77,7 +87,9 @@ public partial class GameScreen : Control
         // ---- bottom row
         Minimap = new Minimap(this);
         var miniPanel = Ui.Panel(4);
-        miniPanel.AddChild(Ui.V(2, Minimap, _hover));
+        miniPanel.AddChild(Ui.V(2, Minimap, _hover, _ping));
+        _hover.CustomMinimumSize = new Vector2(250, 0);
+        _hover.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         var unitPanel = Ui.Panel(8);
         unitPanel.CustomMinimumSize = new Vector2(420, 0);
         unitPanel.SizeFlagsVertical = SizeFlags.ShrinkEnd;
@@ -118,7 +130,7 @@ public partial class GameScreen : Control
         _toast.HorizontalAlignment = HorizontalAlignment.Center;
         AddChild(overlay);
 
-        Log("Игра началась. ЛКМ — выбрать, ПКМ — идти/атаковать, колесо — масштаб, WASD — камера, Q/E — поворот.", Ui.Dim);
+        Log("Игра началась. ЛКМ — выбрать, ПКМ — идти/атаковать, колесо — масштаб, WASD — камера, Q/E — поворот, M — звук.", Ui.Dim);
     }
 
     public override void _Ready() => Map.ApplyCamera();
@@ -130,6 +142,7 @@ public partial class GameScreen : Control
     {
         Map.OnDelta(d);
         Minimap?.MarkDirty();
+        if (d.Events.Any(e => e.Type == EventKind.Combat)) Sound.Play(Sfx.Id.Combat);
         foreach (var e in d.Events)
         {
             string? text = W.Describe(e);
@@ -137,12 +150,20 @@ public partial class GameScreen : Control
             bool bad = e.Type is EventKind.Protest or EventKind.Secession or EventKind.Bankrupt or EventKind.WarDeclared;
             Log(text, bad ? Ui.Bad : e.Type == EventKind.TechDone ? Ui.Science : Colors.White);
             if (e.Type == EventKind.Proposal) Toggle(Win.Diplomacy, true);
+            switch (e.Type)
+            {
+                case EventKind.TechDone: Sound.Play(Sfx.Id.Tech); break;
+                case EventKind.BuildDone: Sound.Play(Sfx.Id.Build); break;
+                case EventKind.CityFounded or EventKind.CityCaptured or EventKind.Congress: Sound.Play(Sfx.Id.City); break;
+                case EventKind.Protest or EventKind.Secession or EventKind.WarDeclared or EventKind.Bankrupt: Sound.Play(Sfx.Id.Error); break;
+            }
         }
         if (d.TimerLeft >= 0) { _timerBase = d.TimerLeft; _timerShownAt = Time.GetTicksMsec() / 1000.0; }
         else if (W.TimerLeft < 0) _timerBase = -1;
 
         if (W.Turn != _lastTurn)
         {
+            if (_lastTurn >= 0) Sound.Play(Sfx.Id.Turn);
             _lastTurn = W.Turn;
             _skipped.Clear();
             _advancePending = true;
@@ -168,7 +189,7 @@ public partial class GameScreen : Control
     public void OnCommandResult(int seq, bool ok, string error)
     {
         Map.OnCommandResult(seq, ok);
-        if (!ok) Toast(error, true);
+        if (!ok) { Toast(error, true); Sound.Play(Sfx.Id.Error); }
     }
 
     public void Toast(string text, bool bad)
@@ -215,6 +236,11 @@ public partial class GameScreen : Control
             case Key.F: UnitCommand(CmdType.Fortify); break;
             case Key.C: if (Selected is { } s) Map.CenterOn(s.Tile); break;
             case Key.T: _chat.GrabFocus(); break;
+            case Key.M:
+                Sound.Muted = !Sound.Muted;
+                _main.SaveSetting("mute", Sound.Muted ? "1" : "0");
+                Toast(Sound.Muted ? "Звук выключен" : "Звук включён", false);
+                break;
             case Key.F2: Toggle(Win.Economy); break;
             case Key.F4: Toggle(Win.Diplomacy); break;
             case Key.F6: Toggle(Win.Science); break;
@@ -264,17 +290,28 @@ public partial class GameScreen : Control
         {
             var next = own.FirstOrDefault(u => u.Id > Map.SelectedUnit && selectedHere) ?? own[0];
             Map.Select(next.Id);
+            Sound.Play(Sfx.Id.Click);
         }
         else Map.Select(-1);
         if (_win == Win.City) Toggle(Win.None);
         Refresh();
     }
 
+    private bool HasRes(Resource r) => r == Resource.None || W.Me.Resources.Contains((int)r);
+    private bool CoastalCity(CityDto c) => W.Grid.Nb[c.Tile].Any(n => W.Vis[n] > 0 && W.Tiles[n].IsWater);
+
     public void TileOrdered(int tile)
     {
+        if (tile >= 0 && _win == Win.City && W.Cities.TryGetValue(_cityId, out var buyer))
+        {
+            // with the city screen open, a right click buys land for that city
+            Net.SendCommand(CmdType.BuyTile, buyer.Id, tile);
+            return;
+        }
         if (tile < 0 || Selected is not { } u || u.Owner != W.MyId) return;
         if (!W.MyTurn) { Toast("Сейчас не ваш ход", true); return; }
         Map.OrderMove(u, tile);
+        Sound.Play(Sfx.Id.Move);
         _advancePending = true;
     }
 
@@ -290,12 +327,14 @@ public partial class GameScreen : Control
         };
         if (t.Relief == Relief.Hills) terrain += ", холмы";
         if (t.Forest) terrain += ", лес";
-        string res = t.Resource switch
+        string res = "";
+        if (t.Resource != Resource.None)
         {
-            Resource.Wheat => " · пшеница", Resource.Cattle => " · скот", Resource.Fish => " · рыба", Resource.Iron => " · железо",
-            Resource.Horses => " · лошади", Resource.Gold => " · золото", Resource.Stone => " · камень", Resource.Oil => " · нефть",
-            Resource.Uranium => " · уран", _ => "",
-        };
+            var rd = Rules.Res(t.Resource);
+            string cls = rd.Class switch { ResClass.Bonus => "бонусный", ResClass.Strategic => "стратегический", _ => "роскошь" };
+            res = $" · {rd.Name} ({cls}, нужно: {Rules.WorkName(rd.Imp).ToLower()})";
+        }
+        if (t.Improvement != Improvement.None) res += $" · {Rules.WorkName((WorkKind)(int)t.Improvement).ToLower()}";
         string owner = t.Owner >= 0 ? $" · {W.PlayerName(t.Owner)}" : "";
         _hover.Text = $"{terrain}{res} · {f}🌾 {p}⚒ {c}💰{owner}";
     }
@@ -312,6 +351,8 @@ public partial class GameScreen : Control
         var me = W.Me;
         _turn.Text = $"Ход {W.Turn} · {Rules.EraName(Rules.EraOf(me.Known, me.Future))}";
         _gold.Text = $"Золото {me.Gold} ({Ui.Signed(me.GoldRate)})";
+        _extra.Text = $"Вера {me.Faith} · Одобр. {me.Favor}";
+        _extra.TooltipText = $"Вера: {me.Faith} ({Ui.Signed(me.FaithRate)} за ход) — мирные покупки в городах.\nДипломатическое одобрение: {me.Favor} ({Ui.Signed(me.FavorRate)} за ход) — голоса во Всемирном конгрессе (окно дипломатии).";
         var tech = Rules.Tech(me.Research);
         if (tech == null) _science.Text = $"Наука +{me.SciRate}: исследование не выбрано!";
         else
@@ -369,9 +410,10 @@ public partial class GameScreen : Control
         if (u.Owner != W.MyId) return;
         if (def.Role == UnitRole.Settler) row.AddChild(Ui.Btn("Основать город (B)", () => UnitCommand(CmdType.FoundCity)));
         if (def.Role == UnitRole.Worker && u.Work == 0)
-            foreach (var kind in new[] { WorkKind.Farm, WorkKind.Mine, WorkKind.Cottage, WorkKind.Road })
+            foreach (var kind in Rules.AllWork)
             {
                 var tile = W.Tiles[u.Tile];
+                if (tile.IsWater != def.Sea) continue;
                 if (!Rules.WorkFits(tile, kind) || !W.Knows(Rules.WorkTech(kind))) continue;
                 if (tile.Owner != W.MyId && !(kind == WorkKind.Road && tile.Owner < 0)) continue;
                 var k = kind;
@@ -379,7 +421,7 @@ public partial class GameScreen : Control
             }
         if (u.Fortified || u.Work != 0 || u.Goto >= 0) row.AddChild(Ui.Btn("Отменить приказ", () => UnitCommand(CmdType.Wake)));
         else row.AddChild(Ui.Btn(def.Str > 0 ? "Укрепиться (F)" : "Спать (F)", () => UnitCommand(CmdType.Fortify)));
-        int upTo = Rules.UpgradeTarget(u.Type, W.Knows);
+        int upTo = Rules.UpgradeTarget(u.Type, W.Knows, HasRes);
         if (upTo >= 0 && W.Tiles[u.Tile].Owner == W.MyId)
         {
             int price = Rules.UpgradePrice(u.Type, upTo);
@@ -475,6 +517,7 @@ public partial class GameScreen : Control
         Stat("Постройки", d.Buildings.Length == 0 ? "нет" : string.Join(", ", d.Buildings.Select(b => Rules.Building(b)?.Name ?? b)));
         Add(grid);
 
+        Add(Ui.Lbl("Купить клетку для города: правый клик по свободной клетке рядом с вашей границей, пока открыто это окно.", 12, Ui.Dim));
         Heading("Очередь производства");
         if (d.Queue.Length == 0) Add(Ui.Lbl("Пусто — город простаивает. Выберите, что строить.", 14, Ui.Bad));
         for (int i = 0; i < d.Queue.Length; i++)
@@ -491,6 +534,14 @@ public partial class GameScreen : Control
                 var buy = Ui.Btn($"Купить за {price}", () => Net.SendCommand(CmdType.Buy, c.Id));
                 buy.Disabled = W.Me.Gold < price;
                 row.AddChild(buy);
+                bool peaceful = item.StartsWith("b:") || Rules.Units[Rules.UnitIndex(item[2..])].Role != UnitRole.Military;
+                if (peaceful)
+                {
+                    int fp = Rules.FaithPrice(cost, d.Prod);
+                    var buyF = Ui.Btn($"За веру: {fp}", () => Net.SendCommand(CmdType.BuyFaith, c.Id), "Вера оплачивает здания и мирных юнитов");
+                    buyF.Disabled = W.Me.Faith < fp;
+                    row.AddChild(buyF);
+                }
             }
             row.AddChild(Ui.Btn("✕", () => Net.SendCommand(CmdType.RemoveQueue, c.Id, idx), "Убрать из очереди"));
             Add(row);
@@ -512,15 +563,27 @@ public partial class GameScreen : Control
             b.Alignment = HorizontalAlignment.Left;
             col.AddChild(b);
         }
-        foreach (var ud in Rules.Units.Where(x => W.Knows(x.Tech)).OrderByDescending(x => x.Cost).Take(9).Reverse())
-            Option(units, "u:" + ud.Id, ud.Name, ud.Cost, ud.Role switch
+        bool coastal = CoastalCity(c);
+        var land = Rules.Units.Where(x => !x.Sea && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(8).Reverse();
+        var navy = Rules.Units.Where(x => x.Sea && coastal && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(4).Reverse();
+        foreach (var ud in land.Concat(navy))
+            Option(units, "u:" + ud.Id, ud.Sea ? "⚓ " + ud.Name : ud.Name, ud.Cost, ud.Role switch
             {
                 UnitRole.Settler => "Основывает новый город (город теряет 1 жителя)",
-                UnitRole.Worker => "Строит фермы, шахты, посёлки и дороги",
-                _ => $"Сила {ud.Str}, ходы {ud.Moves}" + (ud.CityDefPct > 0 ? $", +{ud.CityDefPct}% при обороне города" : ""),
+                UnitRole.Worker => ud.Sea ? "Строит рыбацкие суда и нефтяные платформы на морских ресурсах" : "Строит улучшения на суше и дороги",
+                _ => $"Сила {ud.Str}, ходы {ud.Moves}" + (ud.CityDefPct > 0 ? $", +{ud.CityDefPct}% при обороне города" : "")
+                     + (ud.Needs != Resource.None ? $", требует ресурс: {Rules.Res(ud.Needs).Name}" : ""),
             });
+        var missing = Rules.Units.Where(x => W.Knows(x.Tech) && !HasRes(x.Needs) && (!x.Sea || coastal)).ToList();
+        if (missing.Count > 0)
+        {
+            var note = Ui.Lbl("Нет ресурса: " + string.Join(", ", missing.Select(x => $"{x.Name} ({Rules.Res(x.Needs).Name})")), 12, Ui.Dim);
+            note.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            note.CustomMinimumSize = new Vector2(330, 0);
+            units.AddChild(note);
+        }
         Option(units, Rules.Wealth, "Богатство (производство → золото)", 0, "Город не строит ничего, а приносит золото");
-        foreach (var bd in Rules.Buildings.Where(x => x.Id != "palace" && W.Knows(x.Tech) && !d.Buildings.Contains(x.Id) && !d.Queue.Contains("b:" + x.Id)))
+        foreach (var bd in Rules.Buildings.Where(x => x.Id != "palace" && W.Knows(x.Tech) && (!x.Coastal || coastal) && !d.Buildings.Contains(x.Id) && !d.Queue.Contains("b:" + x.Id)))
             Option(builds, "b:" + bd.Id, bd.Name, bd.Cost, bd.Describe());
     }
 
@@ -529,8 +592,11 @@ public partial class GameScreen : Control
         var parts = new List<string>();
         parts.AddRange(Rules.Units.Where(u => u.Tech == t.Id).Select(u => u.Name));
         parts.AddRange(Rules.Buildings.Where(b => b.Tech == t.Id).Select(b => b.Name));
-        foreach (var k in new[] { WorkKind.Farm, WorkKind.Mine, WorkKind.Cottage, WorkKind.Road })
-            if (Rules.WorkTech(k) == t.Id) parts.Add(Rules.WorkName(k).ToLower() + " (рабочие)");
+        foreach (var k in Rules.AllWork)
+            if (Rules.WorkTech(k) == t.Id) parts.Add(Rules.WorkName(k).ToLower() + " (улучшение)");
+        parts.AddRange(Rules.Resources.Where(r => r.Reveal == t.Id).Select(r => "ресурс " + r.Name.ToLower()));
+        if (t.Id == "sailing") parts.Add("посадка на суда у берега");
+        if (t.Id == "astronomy") parts.Add("плавание через океан");
         if (t.Branch >= 0) parts.Add(Rules.FutureBranchEffects[t.Branch]);
         return parts.Count == 0 ? "путь к следующим технологиям" : string.Join(", ", parts);
     }
@@ -538,7 +604,7 @@ public partial class GameScreen : Control
     private void BuildScience()
     {
         var me = W.Me;
-        _windowTitle.Text = "Советник по науке";
+        _windowTitle.Text = "Наука и дерево технологий";
         var cur = Rules.Tech(me.Research);
         Add(Ui.Lbl(cur == null ? "Исследование не выбрано — очки науки копятся впустую." : $"Сейчас изучается: {cur.Name}", 15, cur == null ? Ui.Bad : Ui.Science));
         Add(Ui.Lbl($"Наука за ход: +{me.SciRate}" + (me.EchoBonus > 0 ? $" (из них «научное эхо» от контактов: +{me.EchoBonus})" : "") +
@@ -561,6 +627,48 @@ public partial class GameScreen : Control
                 info.AddChild(Ui.Lbl($"Эффект низкой базы: −{100 - a.Cost * 100 / a.BaseCost}% (обычная цена {a.BaseCost})", 12, Ui.Good));
             Add(Ui.H(12, b, info));
         }
+        BuildTechTree();
+    }
+
+    private void BuildTechTree()
+    {
+        var me = W.Me;
+        Heading("Дерево технологий");
+        Add(Ui.Lbl("✔ изучено · ▶ изучается · светлые — доступны сейчас · серые — нужны предшественники (наведите курсор)", 12, Ui.Dim));
+        var known = new HashSet<string>(me.Known);
+        var available = me.Available.ToDictionary(a => a.Id);
+        var eras = Ui.H(10);
+        for (int era = 0; era < Rules.EraNames.Length; era++)
+        {
+            var col = Ui.V(3, Ui.Lbl(Rules.EraNames[era], 13, Ui.Gold));
+            foreach (var t in Rules.Techs.Where(t => t.Era == era))
+                col.AddChild(TechButton(t, known.Contains(t.Id), available.GetValueOrDefault(t.Id)));
+            eras.AddChild(col);
+        }
+        var future = Ui.V(3, Ui.Lbl("Будущее (бесконечно)", 13, Ui.Gold));
+        for (int b = 0; b < 4; b++)
+        {
+            var t = Rules.Tech(Rules.FutureId(b, me.Future[b] + 1))!;
+            future.AddChild(TechButton(t, false, available.GetValueOrDefault(t.Id)));
+        }
+        eras.AddChild(future);
+        Add(eras);
+    }
+
+    private Button TechButton(TechDef t, bool known, TechCostDto? avail)
+    {
+        bool current = W.Me.Research == t.Id;
+        string id = t.Id;
+        var b = Ui.Btn((known ? "✔ " : current ? "▶ " : "") + t.Name + (known ? "" : $"  {avail?.Cost ?? t.Cost}"),
+            () => Net.SendCommand(CmdType.SetResearch, s: id), size: 12);
+        b.Alignment = HorizontalAlignment.Left;
+        b.CustomMinimumSize = new Vector2(168, 0);
+        b.Disabled = known || avail == null;
+        string pre = t.Prereqs.Length == 0 ? "" : "\nТребует: " + string.Join(", ", t.Prereqs.Select(p => Rules.Tech(p)?.Name ?? p));
+        b.TooltipText = "Открывает: " + Unlocks(t) + pre;
+        if (known) b.AddThemeColorOverride("font_disabled_color", Ui.Good);
+        else if (current) b.AddThemeColorOverride("font_color", Ui.Science);
+        return b;
     }
 
     private void BuildEconomy()
@@ -582,6 +690,11 @@ public partial class GameScreen : Control
         Line("«Логистический надрыв» (штраф лидера)", Cost(me.StrainCost), me.StrainCost > 0 ? Ui.Bad : null);
         Line("Итого за ход", Ui.Signed(me.GoldRate), me.GoldRate < 0 ? Ui.Bad : Ui.Gold);
         Line("В казне", me.Gold.ToString(), Ui.Gold);
+        Line("Вера", $"{me.Faith} ({Ui.Signed(me.FaithRate)} за ход) — святилища, храмы, соборы; тратится на мирные покупки в городах");
+        Line("Дипломатическое одобрение", $"{me.Favor} ({Ui.Signed(me.FavorRate)} за ход) — мир и открытые границы; тратится на голоса в конгрессе");
+        Line("Роскошь", me.Luxuries == 0 ? "нет" : $"{me.Luxuries} вид(ов): +{me.Luxuries} довольства в каждом городе");
+        var have = me.Resources.Select(r => Rules.Res((Resource)r)).ToList();
+        Line("Подключённые ресурсы", have.Count == 0 ? "нет" : string.Join(", ", have.Select(r => r.Name)));
         Add(grid);
 
         Heading("Анти-Сноуболл: ваше положение в мире");
@@ -627,6 +740,21 @@ public partial class GameScreen : Control
     {
         _windowTitle.Text = "Дипломатия";
         var me = W.Me;
+        // ---- world congress
+        string chair = me.Chair >= 0 ? $"председатель — «{W.PlayerName(me.Chair)}» (+10% золота и культуры)" : "председатель не избран";
+        Add(Ui.Lbl($"Всемирный конгресс: {chair}. Следующее заседание через {me.CongressIn} х.", 14, Ui.Gold));
+        Add(Ui.Lbl($"Ваше дипломатическое одобрение: {me.Favor} ({Ui.Signed(me.FavorRate)} за ход). Каждое очко — один голос; побеждает набравший больше всех.", 12, Ui.Dim));
+        var voteRow = new HFlowContainer();
+        foreach (var cand in W.Players.Values.Where(x => x.Alive && !x.Neutral && (x.Met || x.Id == W.MyId)).OrderBy(x => x.Id))
+        {
+            int cid = cand.Id;
+            int votes = cid < me.Votes.Length ? me.Votes[cid] : 0;
+            var vb = Ui.Btn($"+10 за «{cand.Name}» (сейчас {votes})", () => Net.SendCommand(CmdType.Vote, cid, 10), size: 13);
+            vb.Disabled = me.Favor < 10;
+            voteRow.AddChild(vb);
+        }
+        Add(voteRow);
+        Add(new HSeparator());
         foreach (var pr in me.Proposals.Where(p => p.To == W.MyId))
         {
             int id = pr.Id;
@@ -658,6 +786,11 @@ public partial class GameScreen : Control
                     : Ui.Btn("Открыть границы", () => Net.SendCommand(CmdType.Propose, pid, (int)ProposalKind.OpenBorders)));
                 row.AddChild(Ui.Btn("Объявить войну", () => Net.SendCommand(CmdType.DeclareWar, pid)));
             }
+            var giftGold = Ui.Btn("Дать 50 зол.", () => Net.SendCommand(CmdType.Gift, pid, 0, 50), size: 12);
+            giftGold.Disabled = me.Gold < 50;
+            var giftFavor = Ui.Btn("Дать 10 одобр.", () => Net.SendCommand(CmdType.Gift, pid, 1, 10), size: 12);
+            giftFavor.Disabled = me.Favor < 10;
+            row.AddChild(giftGold); row.AddChild(giftFavor);
             Add(Ui.V(0, row, Ui.Lbl(tags, 12, Ui.Dim)));
         }
         var free = W.Players.Values.FirstOrDefault(p => p.Neutral);
