@@ -66,6 +66,9 @@ public partial class DemoTour : Node
         for (int turn = 0; turn < 45; turn++)
         {
             await Wait(0.12);
+            if (w.Me.Civic.Length == 0) net.SendCommand(CmdType.SetCivic, s: Rules.AvailableCivics(w.Me.Civics, w.Me.CivicLevel).OrderBy(c => c.Cost).First().Id);
+            if (w.Me.MyReligion == 0 && w.Me.Faith >= Rules.ReligionPrice(w.Me.Religions.Length) && w.Me.Religions.Length < 6)
+                net.SendCommand(CmdType.FoundReligion, Enumerable.Range(0, 8).First(i => w.Me.Religions.All(r => r.Name != Rules.ReligionNames[i])), Enumerable.Range(0, 6).First(i => w.Me.Religions.All(r => r.Belief != i)));
             if (w.Me.Research.Length == 0 && w.Me.Available.Length > 0)
                 net.SendCommand(CmdType.SetResearch, s: w.Me.Available.OrderBy(a => a.Cost).First().Id);
             foreach (var c in w.Cities.Values.Where(c => c.Owner == w.MyId && c.Detail is { Queue.Length: 0 }))
@@ -94,6 +97,8 @@ public partial class DemoTour : Node
         await Shot("03_map");
         if (capital != null) { game.OpenCity(capital.Id); await Shot("04_city"); }
         game.Toggle(Win.Science, true); await Shot("05_science");
+        game.Toggle(Win.Civics, true); await Shot("05b_civics");
+        game.Toggle(Win.Religion, true); await Shot("05c_religion");
         game.Toggle(Win.Economy, true); await Shot("06_economy");
         game.Toggle(Win.Diplomacy, true); await Shot("07_diplomacy");
         game.Toggle(Win.Demographics, true); await Shot("08_demographics");

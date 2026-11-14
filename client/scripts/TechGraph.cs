@@ -31,23 +31,42 @@ public partial class TechGraph : Control
     /// <summary>X position of the first column that still has something to research.</summary>
     public float FrontierX { get; private set; }
 
-    public TechGraph(MeDto me, Action<string> research)
+    private readonly string _unit;
+    private readonly Func<string, TechDef?> _lookup;
+    private readonly Func<TechDef, string> _unlocks;
+
+    /// <summary>The science tree.</summary>
+    public static TechGraph ForScience(MeDto me, Action<string> research) => new(
+        Rules.Techs, Enumerable.Range(0, 4).Select(b => Rules.Tech(Rules.FutureId(b, me.Future[b] + 1))!).ToList(),
+        new HashSet<string>(me.Known), me.Available.ToDictionary(a => a.Id), me.Research, me.SciRate, me.ResearchProgress,
+        "науки", Rules.Tech, GameScreen.Unlocks, research);
+
+    /// <summary>The social institutions tree, advanced by culture.</summary>
+    public static TechGraph ForCivics(MeDto me, Action<string> adopt)
     {
-        _research = research;
-        _sciRate = me.SciRate; _progress = me.ResearchProgress;
-        var known = new HashSet<string>(me.Known);
-        var avail = me.Available.ToDictionary(a => a.Id);
+        static TechDef Conv(Rules.CivicDef c) => new(c.Id, c.Name, c.Cost, c.Era, c.Prereqs);
+        var avail = Rules.AvailableCivics(me.Civics, me.CivicLevel)
+            .ToDictionary(c => c.Id, c => new TechCostDto { Id = c.Id, Cost = c.Cost, BaseCost = c.Cost });
+        return new TechGraph(Rules.Civics.Select(Conv).ToList(), new List<TechDef> { Conv(Rules.Civic($"cf_{me.CivicLevel + 1}")!) },
+            new HashSet<string>(me.Civics), avail, me.Civic, me.CultureRate, me.CivicProgress, "культуры",
+            id => Rules.Civic(id) is { } c ? Conv(c) : null, t => Rules.Civic(t.Id)?.Effect.Describe() ?? "", adopt);
+    }
+
+    private TechGraph(IReadOnlyList<TechDef> tree, IReadOnlyList<TechDef> endless, HashSet<string> known, Dictionary<string, TechCostDto> avail,
+        string current, int rate, int progress, string unit, Func<string, TechDef?> lookup, Func<TechDef, string> unlocks, Action<string> research)
+    {
+        _research = research; _unit = unit; _lookup = lookup; _unlocks = unlocks;
+        _sciRate = rate; _progress = progress;
 
         var depth = new Dictionary<string, int>();
         int Depth(TechDef t) => depth.TryGetValue(t.Id, out int d) ? d
-            : depth[t.Id] = t.Prereqs.Length == 0 ? 0 : 1 + t.Prereqs.Max(p => Depth(Rules.Tech(p)!));
-        foreach (var t in Rules.Techs)
+            : depth[t.Id] = t.Prereqs.Length == 0 ? 0 : 1 + t.Prereqs.Max(p => Depth(lookup(p)!));
+        foreach (var t in tree)
             Add(new Node { Tech = t, Col = Depth(t), Known = known.Contains(t.Id) });
         int lastCol = _nodes.Max(n => n.Col);
         // the endless future branches: only the next level of each is shown, to the right of everything else
-        for (int b = 0; b < 4; b++)
-            Add(new Node { Tech = Rules.Tech(Rules.FutureId(b, me.Future[b] + 1))!, Col = lastCol + 1 });
-        foreach (var n in _nodes) { n.Avail = avail.GetValueOrDefault(n.Tech.Id); n.Current = me.Research == n.Tech.Id; }
+        foreach (var t in endless) Add(new Node { Tech = t, Col = lastCol + 1 });
+        foreach (var n in _nodes) { n.Avail = avail.GetValueOrDefault(n.Tech.Id); n.Current = current == n.Tech.Id; }
 
         // order every column by where its prerequisites sit, so the curves cross as little as possible
         float maxRows = 0;
@@ -94,10 +113,10 @@ public partial class TechGraph : Control
     {
         var n = NodeAt(at);
         if (n == null) return "";
-        string pre = n.Tech.Prereqs.Length == 0 ? "" : "\nТребует: " + string.Join(", ", n.Tech.Prereqs.Select(p => Rules.Tech(p)?.Name ?? p));
+        string pre = n.Tech.Prereqs.Length == 0 ? "" : "\nТребует: " + string.Join(", ", n.Tech.Prereqs.Select(p => _lookup(p)?.Name ?? p));
         string state = n.Known ? "Изучено" : n.Current ? "Изучается сейчас" : n.Avail != null ? "Нажмите, чтобы изучать" : "Пока недоступно";
         string discount = n.Avail != null && n.Avail.Cost < n.Avail.BaseCost ? $"\nЭффект низкой базы: {n.Avail.Cost} вместо {n.Avail.BaseCost}" : "";
-        return $"{n.Tech.Name} — {Rules.EraName(n.Tech.Era)}\n{state}\nОткрывает: {GameScreen.Unlocks(n.Tech)}{pre}{discount}";
+        return $"{n.Tech.Name} — {Rules.EraName(n.Tech.Era)}\n{state}\nДаёт: {_unlocks(n.Tech)}{pre}{discount}";
     }
 
     public override void _Draw()
@@ -151,7 +170,7 @@ public partial class TechGraph : Control
             else
             {
                 int cost = n.Avail?.Cost ?? n.Tech.Cost;
-                sub = $"{cost} науки";
+                sub = $"{cost} {_unit}";
                 if (n.Avail != null && _sciRate > 0)
                     sub += $" · {Math.Max(1, (cost - (n.Current ? _progress : Math.Min(_progress, cost)) + _sciRate - 1) / _sciRate)} х.";
                 if (n.Avail != null && n.Avail.Cost < n.Avail.BaseCost) sub += " ▼";

@@ -678,7 +678,7 @@ public partial class MapView : Node3D
             if (v.Type != u.Type || v.Owner != u.Owner)
             {
                 v.Type = u.Type; v.Owner = u.Owner;
-                bool civilian = u.Def.Role is UnitRole.Settler or UnitRole.Worker;
+                bool civilian = u.Def.Role is UnitRole.Settler or UnitRole.Worker or UnitRole.Missionary;
                 if (u.Def.Sea)
                 {
                     // a hull with a sail in the owner's colour
@@ -766,7 +766,8 @@ public partial class MapView : Node3D
                 n.Root.AddChild(banner); n.Root.AddChild(flag);
                 n.Houses.Add(banner); n.Houses.Add(flag);
             }
-            n.Label.Text = (c.Capital ? "★ " : "") + c.Name + "  " + c.Pop;
+            var creed = W.Me.Religions.FirstOrDefault(r => r.Id == c.Religion);
+            n.Label.Text = (c.Capital ? "★ " : "") + c.Name + "  " + c.Pop + (creed != null ? $"  ✦{creed.Name[..creed.Name.IndexOf(' ')]}" : "");
             n.Label.Modulate = c.Disorder ? Ui.Bad : Colors.White;
             n.Label.OutlineModulate = OwnerColor(c.Owner).Darkened(0.55f);
             n.Label.PixelSize = Lod >= 2 ? 0.0095f : Lod == 1 ? 0.016f : 0.03f;

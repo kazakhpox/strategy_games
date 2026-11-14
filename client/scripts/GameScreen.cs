@@ -8,7 +8,7 @@ using TileData = IH.Shared.TileData;
 
 namespace IH.Client;
 
-public enum Win { None, City, Science, Economy, Diplomacy, Demographics }
+public enum Win { None, City, Science, Economy, Diplomacy, Demographics, Civics, Religion }
 
 /// <summary>In-game screen: map, HUD, advisors. Sends commands; all rules are decided by the server.</summary>
 public partial class GameScreen : Control
@@ -64,8 +64,10 @@ public partial class GameScreen : Control
         _extra.MouseFilter = MouseFilterEnum.Stop;
         _extra.TooltipText = "Вера — мирные покупки в городах. Одобрение — голоса во Всемирном конгрессе (окно дипломатии).";
         var topRow = Ui.H(12, _turn, _gold, _extra, _itr, _science,
-            Ui.Btn("Наука", () => Toggle(Win.Science), "Наука и дерево технологий (F6)"), Ui.Btn("Экономика", () => Toggle(Win.Economy), "F2"),
-            Ui.Btn("Дипломатия", () => Toggle(Win.Diplomacy), "Дипломатия и Всемирный конгресс (F4)"), Ui.Btn("Демография", () => Toggle(Win.Demographics), "F9"),
+            Ui.Btn("Наука", () => Toggle(Win.Science), "Наука и дерево технологий (F6)"),
+            Ui.Btn("Культура", () => Toggle(Win.Civics), "Социальные институты (F7)"), Ui.Btn("Религия", () => Toggle(Win.Religion), "F8"),
+            Ui.Btn("Экономика", () => Toggle(Win.Economy), "Экономика (F2); демография — F9"),
+            Ui.Btn("Дипломатия", () => Toggle(Win.Diplomacy), "Дипломатия и Всемирный конгресс (F4)"),
             Ui.Btn("Выйти", () => Net.Send(MsgType.LeaveGame), "Покинуть игру. Место сохранится — вернуться можно из списка игр под тем же именем"));
         top.AddChild(topRow);
         _itr.MouseFilter = MouseFilterEnum.Stop;
@@ -151,6 +153,7 @@ public partial class GameScreen : Control
             bool bad = e.Type is EventKind.Protest or EventKind.Secession or EventKind.Bankrupt or EventKind.WarDeclared;
             Log(text, bad ? Ui.Bad : e.Type == EventKind.TechDone ? Ui.Science : Colors.White);
             if (e.Type == EventKind.Proposal) Toggle(Win.Diplomacy, true);
+            if (e.Type is EventKind.CivicDone or EventKind.ReligionFounded) Sound.Play(Sfx.Id.Tech);
             switch (e.Type)
             {
                 case EventKind.TechDone: Sound.Play(Sfx.Id.Tech); break;
@@ -246,6 +249,9 @@ public partial class GameScreen : Control
             case Key.F4: Toggle(Win.Diplomacy); break;
             case Key.F6: Toggle(Win.Science); break;
             case Key.F9: Toggle(Win.Demographics); break;
+            case Key.F7: Toggle(Win.Civics); break;
+            case Key.F8: Toggle(Win.Religion); break;
+            case Key.P: UnitCommand(CmdType.Preach); break;
             default: return;
         }
         GetViewport().SetInputAsHandled();
@@ -386,7 +392,8 @@ public partial class GameScreen : Control
         {
             int idle = W.Units.Values.Count(IsReady);
             bool noResearch = me.Research.Length == 0;
-            _endTurn.Text = noResearch ? "Завершить ход\n(не выбрана наука)" : idle > 0 ? $"Завершить ход\n(юнитов без приказа: {idle})" : "Завершить ход";
+            bool noCivic = me.Civic.Length == 0;
+            _endTurn.Text = noResearch ? "Завершить ход\n(не выбрана наука)" : noCivic ? "Завершить ход\n(не выбран институт)" : idle > 0 ? $"Завершить ход\n(юнитов без приказа: {idle})" : "Завершить ход";
             _endTurn.Disabled = false;
         }
         else
@@ -411,6 +418,14 @@ public partial class GameScreen : Control
         _unitBox.AddChild(row);
         if (u.Owner != W.MyId) return;
         if (def.Role == UnitRole.Settler) row.AddChild(Ui.Btn("Основать город (B)", () => UnitCommand(CmdType.FoundCity)));
+        if (def.Role == UnitRole.Missionary)
+        {
+            var target = W.CityAt(u.Tile);
+            var preach = Ui.Btn(target != null ? $"Проповедовать в городе {target.Name} (P)" : "Проповедовать (P) — встаньте в город",
+                () => UnitCommand(CmdType.Preach), "Миссионер тратится и добавляет городу давление своей религии. Проходит через любые границы");
+            preach.Disabled = target == null;
+            row.AddChild(preach);
+        }
         if (def.Role == UnitRole.Worker && u.Work == 0)
             foreach (var kind in Rules.AllWork)
             {
@@ -492,12 +507,19 @@ public partial class GameScreen : Control
             case Win.Economy: BuildEconomy(); break;
             case Win.Diplomacy: BuildDiplomacy(); break;
             case Win.Demographics: BuildDemographics(); break;
+            case Win.Civics: BuildCivics(); break;
+            case Win.Religion: BuildReligion(); break;
         }
-        if (!_scrollToFrontier || _win != Win.Science) _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollHorizontal, scrollX);
+        if (!_scrollToFrontier || (_win != Win.Science && _win != Win.Civics)) _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollHorizontal, scrollX);
         _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollVertical, scroll);
     }
 
-    private void Add(Control c) => _windowBody.AddChild(c);
+    private void Add(Control c)
+    {
+        // long explanations wrap instead of stretching the window sideways
+        if (c is Label { Text.Length: > 95 } l) { l.AutowrapMode = TextServer.AutowrapMode.WordSmart; l.CustomMinimumSize = new Vector2(780, 0); }
+        _windowBody.AddChild(c);
+    }
     private void Heading(string text) { Add(new HSeparator()); Add(Ui.Lbl(text, 16, Ui.Gold)); }
 
     private void BuildCity()
@@ -519,6 +541,11 @@ public partial class GameScreen : Control
         Stat("Довольство", $"лимит {d.Happy}, недовольных {d.Unhappy}", d.Unhappy > 0 ? Ui.Bad : null);
         Stat("Социальное брожение", $"{d.Unrest}/100" + (d.Unrest >= 60 ? " — близко к протестам!" : ""), d.Unrest >= 60 ? Ui.Bad : d.Unrest >= 30 ? Ui.Gold : null);
         Stat("Содержание", $"{d.Maint} золота за ход");
+        var creed = W.Me.Religions.FirstOrDefault(r => r.Id == c.Religion);
+        string pressure = string.Join(", ", Enumerable.Range(0, d.Pressure.Length / 2)
+            .Select(i => $"{W.Me.Religions.FirstOrDefault(r => r.Id == d.Pressure[i * 2])?.Name ?? "?"} {d.Pressure[i * 2 + 1]}"));
+        Stat("Религия", creed == null ? "нет" + (pressure.Length > 0 ? $" (давление: {pressure})" : "")
+            : $"{creed.Name} — {Rules.Beliefs[creed.Belief].Name}: {Rules.Beliefs[creed.Belief].Effect.Describe()}" + (pressure.Length > 0 ? $" (давление: {pressure})" : ""));
         Stat("Постройки", d.Buildings.Length == 0 ? "нет" : string.Join(", ", d.Buildings.Select(b => Rules.Building(b)?.Name ?? b)));
         Add(grid);
 
@@ -569,7 +596,7 @@ public partial class GameScreen : Control
             col.AddChild(b);
         }
         bool coastal = CoastalCity(c);
-        var land = Rules.Units.Where(x => !x.Sea && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(8).Reverse();
+        var land = Rules.Units.Where(x => !x.Sea && x.Role != UnitRole.Missionary && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(8).Reverse();
         var navy = Rules.Units.Where(x => x.Sea && coastal && W.Knows(x.Tech) && HasRes(x.Needs)).OrderByDescending(x => x.Cost).Take(4).Reverse();
         foreach (var ud in land.Concat(navy))
             Option(units, "u:" + ud.Id, ud.Sea ? "⚓ " + ud.Name : ud.Name, ud.Cost, ud.Role switch
@@ -579,7 +606,7 @@ public partial class GameScreen : Control
                 _ => $"Сила {ud.Str}, ходы {ud.Moves}" + (ud.CityDefPct > 0 ? $", +{ud.CityDefPct}% при обороне города" : "")
                      + (ud.Needs != Resource.None ? $", требует ресурс: {Rules.Res(ud.Needs).Name}" : ""),
             });
-        var missing = Rules.Units.Where(x => W.Knows(x.Tech) && !HasRes(x.Needs) && (!x.Sea || coastal)).ToList();
+        var missing = Rules.Units.Where(x => x.Role != UnitRole.Missionary && W.Knows(x.Tech) && !HasRes(x.Needs) && (!x.Sea || coastal)).ToList();
         if (missing.Count > 0)
         {
             var note = Ui.Lbl("Нет ресурса: " + string.Join(", ", missing.Select(x => $"{x.Name} ({Rules.Res(x.Needs).Name})")), 12, Ui.Dim);
@@ -639,13 +666,105 @@ public partial class GameScreen : Control
     {
         Heading("Дерево технологий");
         Add(Ui.Lbl("Слева направо — от ранних к поздним; линии ведут от нужных предшественников.\nЗелёные изучены, светлые доступны (нажмите), серые закрыты. ▼ — скидка догоняющего. Прокрутка — полосой внизу или Shift+колесо.", 12, Ui.Dim));
-        var graph = new TechGraph(W.Me, id => Net.SendCommand(CmdType.SetResearch, s: id));
+        var graph = TechGraph.ForScience(W.Me, id => Net.SendCommand(CmdType.SetResearch, s: id));
         Add(graph);
         if (_scrollToFrontier)
         {
             // on opening, jump to the part of the tree the player is working on
             _scrollToFrontier = false;
             _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollHorizontal, (int)graph.FrontierX);
+        }
+    }
+
+    private void BuildCivics()
+    {
+        var me = W.Me;
+        _windowTitle.Text = "Социальные институты";
+        var cur = Rules.Civic(me.Civic);
+        Add(Ui.Lbl(cur == null ? "Институт не выбран — культура копится впустую." : $"Сейчас принимается: {cur.Name} ({me.CivicProgress}/{cur.Cost})",
+            15, cur == null ? Ui.Bad : Ui.Gold));
+        Add(Ui.Lbl($"Культура империи: +{me.CultureRate} за ход (её дают города: монументы, храмы, театры). Принято институтов: {me.Civics.Length + me.CivicLevel}.", 13));
+        var total = Rules.CivicBonus(me.Civics, me.CivicLevel).Describe();
+        Add(Ui.Lbl("Действующие бонусы: " + (total.Length > 0 ? total : "пока нет"), 13, Ui.Good));
+        Add(Ui.Lbl("Каждый институт даёт постоянный бонус всей империи. Нажмите на доступный узел, чтобы принять его.", 12, Ui.Dim));
+        var graph = TechGraph.ForCivics(me, id => Net.SendCommand(CmdType.SetCivic, s: id));
+        Add(graph);
+        if (_scrollToFrontier)
+        {
+            _scrollToFrontier = false;
+            _windowScroll.SetDeferred(ScrollContainer.PropertyName.ScrollHorizontal, (int)graph.FrontierX);
+        }
+        Heading("Доступно сейчас");
+        foreach (var c in Rules.AvailableCivics(me.Civics, me.CivicLevel).OrderBy(c => c.Cost))
+        {
+            string id = c.Id;
+            var b = Ui.Btn($"{(id == me.Civic ? "▶ " : "")}{c.Name} — {c.Cost} ({Turns(c.Cost - Math.Min(me.CivicProgress, c.Cost), me.CultureRate)})",
+                () => Net.SendCommand(CmdType.SetCivic, s: id));
+            b.Alignment = HorizontalAlignment.Left;
+            b.CustomMinimumSize = new Vector2(380, 0);
+            Add(Ui.H(12, b, Ui.Lbl(c.Effect.Describe(), 12, Ui.Dim)));
+        }
+    }
+
+    private int _relName, _relBelief;
+
+    private void BuildReligion()
+    {
+        var me = W.Me;
+        _windowTitle.Text = "Религия";
+        Add(Ui.Lbl($"Вера: {me.Faith} ({Ui.Signed(me.FaithRate)} за ход). Её дают дворец, святилища, храмы и соборы; институты и реформация умножают её.", 13));
+        var mine = me.Religions.FirstOrDefault(r => r.Id == me.MyReligion);
+        if (mine != null)
+        {
+            Add(Ui.Lbl($"Вы основали религию «{mine.Name}». Верование: {Rules.Beliefs[mine.Belief].Name} — {Rules.Beliefs[mine.Belief].Effect.Describe()}", 15, Ui.Gold));
+            Add(Ui.Lbl($"Ей следуют городов: {mine.Cities}. Каждый такой город даёт вам +1 веры, чужой — ещё и +1 золота за ход.", 13));
+        }
+        else if (me.Religions.Length >= Rules.Beliefs.Length) Add(Ui.Lbl("Все верования уже заняты — основать новую религию нельзя.", 14, Ui.Dim));
+        else
+        {
+            int price = Rules.ReligionPrice(me.Religions.Length);
+            Heading($"Основать религию — {price} веры");
+            var freeNames = Enumerable.Range(0, Rules.ReligionNames.Length).Where(i => me.Religions.All(r => r.Name != Rules.ReligionNames[i])).ToList();
+            var freeBeliefs = Enumerable.Range(0, Rules.Beliefs.Length).Where(i => me.Religions.All(r => r.Belief != i)).ToList();
+            if (!freeNames.Contains(_relName)) _relName = freeNames[0];
+            if (!freeBeliefs.Contains(_relBelief)) _relBelief = freeBeliefs[0];
+            var names = new HFlowContainer();
+            foreach (int i in freeNames)
+            {
+                int idx = i;
+                names.AddChild(Ui.Btn((i == _relName ? "● " : "") + Rules.ReligionNames[i], () => { _relName = idx; RebuildWindow(); }, size: 13));
+            }
+            Add(Ui.Lbl("Название:", 13, Ui.Dim)); Add(names);
+            Add(Ui.Lbl("Верование (действует в каждом городе, который следует религии, чей бы он ни был):", 13, Ui.Dim));
+            foreach (int i in freeBeliefs)
+            {
+                int idx = i;
+                var bb = Ui.Btn($"{(i == _relBelief ? "● " : "")}{Rules.Beliefs[i].Name} — {Rules.Beliefs[i].Effect.Describe()}", () => { _relBelief = idx; RebuildWindow(); }, size: 13);
+                bb.Alignment = HorizontalAlignment.Left;
+                Add(bb);
+            }
+            var found = Ui.Btn($"Основать «{Rules.ReligionNames[_relName]}» со священным городом в столице", () => Net.SendCommand(CmdType.FoundReligion, _relName, _relBelief), size: 15);
+            found.Disabled = me.Faith < price;
+            Add(found);
+        }
+
+        Heading("Религии мира");
+        if (me.Religions.Length == 0) Add(Ui.Lbl("Пока не основано ни одной религии.", 13, Ui.Dim));
+        foreach (var r in me.Religions)
+            Add(Ui.Lbl($"«{r.Name}» — основатель: {W.PlayerName(r.Founder)}; {Rules.Beliefs[r.Belief].Name} ({Rules.Beliefs[r.Belief].Effect.Describe()}); городов: {r.Cities}", 14,
+                r.Id == me.MyReligion ? Ui.Gold : Colors.White));
+
+        Heading("Ваши города");
+        Add(Ui.Lbl($"Религия сама расходится на соседние города (до {Rules.ReligionRange} клеток); священный город влияет сильнее. Миссионер ({Rules.MissionaryFaith} веры) разом добавляет городу {Rules.PreachPressure} давления и проходит через любые границы.", 12, Ui.Dim));
+        foreach (var c in W.Cities.Values.Where(c => c.Owner == W.MyId).OrderBy(c => c.Id))
+        {
+            int cid = c.Id;
+            var rel = me.Religions.FirstOrDefault(r => r.Id == c.Religion);
+            var name = Ui.Lbl($"{c.Name}: {(rel == null ? "без религии" : rel.Name)}", 14);
+            name.CustomMinimumSize = new Vector2(300, 0);
+            var recruit = Ui.Btn($"Нанять миссионера ({Rules.MissionaryFaith} веры)", () => Net.SendCommand(CmdType.Recruit, cid), size: 13);
+            recruit.Disabled = me.Faith < Rules.MissionaryFaith || (mine == null && rel == null);
+            Add(Ui.H(10, name, recruit));
         }
     }
 
