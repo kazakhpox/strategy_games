@@ -197,6 +197,8 @@ public partial class MapView : Node3D
     /// <summary>Approximate size of the ground area in view, for the minimap frame.</summary>
     public Vector2 ViewSize => new(Distance * 1.25f, Distance * 0.95f);
 
+    public Vector2 ScreenPos(int tile) => _camera.UnprojectPosition(Center(tile) + new Vector3(0, 0.3f, 0));
+
     public void CenterOn(int tile) { Cam = Ground(tile); ApplyCamera(); }
 
     public bool OnScreen(int tile)

@@ -28,6 +28,25 @@ public partial class DemoTour : Node
         GD.Print($"tour: saved {name}.png");
     }
 
+    /// <summary>Selects a unit with a real mouse click going through Godot's input pipeline.</summary>
+    private async Task ClickTest()
+    {
+        var game = _main.Game!;
+        var w = _main.Net.World!;
+        var unit = w.Units.Values.First(u => u.Owner == w.MyId);
+        game.Map.CenterOn(unit.Tile);
+        game.Map.Select(-1);
+        await Wait(0.3);
+        var pos = game.Map.ScreenPos(unit.Tile);
+        foreach (bool pressed in new[] { true, false })
+        {
+            Input.ParseInputEvent(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = pressed, Position = pos, GlobalPosition = pos });
+            await Wait(0.1);
+        }
+        bool ok = game.Map.SelectedUnit >= 0 && w.Units.TryGetValue(game.Map.SelectedUnit, out var sel) && sel.Tile == unit.Tile;
+        GD.Print(ok ? "tour: click-select OK" : $"tour: click-select FAILED (selected {game.Map.SelectedUnit})");
+    }
+
     private async Task Run()
     {
         DirAccess.MakeDirRecursiveAbsolute(_dir);
@@ -37,6 +56,7 @@ public partial class DemoTour : Node
         if (net.World == null || _main.Game == null) { GD.PrintErr("tour: game did not start"); GetTree().Quit(1); return; }
         var w = net.World;
         await Shot("01_start");
+        await ClickTest();
 
         var settler = w.Units.Values.FirstOrDefault(u => u.Owner == w.MyId && u.Def.Role == UnitRole.Settler);
         if (settler != null) net.SendCommand(CmdType.FoundCity, settler.Id);
