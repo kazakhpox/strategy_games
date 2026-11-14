@@ -76,6 +76,38 @@ public partial class DemoTour : Node
         await Shot("03b_after_spell");
     }
 
+    /// <summary>Lays every unit and resource model out on a board above the map, to check that each reads at a glance.</summary>
+    private async Task Gallery(GameScreen game, ClientWorld w)
+    {
+        var mat = new StandardMaterial3D { VertexColorUseAsAlbedo = true, VertexColorIsSrgb = true, Roughness = 1f };
+        int home = w.Cities.Values.FirstOrDefault(c => c.Owner == w.MyId)?.Tile ?? w.Grid.Count / 2;
+        var origin = game.Map.Center(home) + new Vector3(0, 1.2f, 0);
+        var root = new Node3D { Position = origin };
+        game.Map.AddChild(root);
+        root.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(17, 0.1f, 9) }, Position = new Vector3(0, -0.05f, 0), MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.36f, 0.5f, 0.3f) } });
+        void Units(int from, int count, float z, float gap)
+        {
+            for (int i = 0; i < count && from + i < Rules.Units.Count(); i++)
+                root.AddChild(new MeshInstance3D { Mesh = Models.Unit(Rules.Units[from + i], w.MyId, game.Map.OwnerColor(w.MyId)), MaterialOverride = mat, Position = new Vector3((i - (count - 1) / 2f) * gap, 0, z), Scale = Vector3.One * 1.15f });
+        }
+        Units(0, 11, -2.2f, 1.25f); Units(11, 11, -0.4f, 1.25f); Units(22, 11, 1.4f, 1.25f);
+        game.Map.Select(-1);
+        game.Map.CenterOn(home); game.Map.Zoom = 1.05f; game.Map.ApplyCamera();
+        var hud = game.GetChildren().OfType<Control>().Where(c => c.Visible).ToList();
+        foreach (var c in hud) c.Visible = false;
+        await Shot("11_units");
+        foreach (var k in root.GetChildren().Skip(1)) k.QueueFree();
+        var all = System.Enum.GetValues<IH.Shared.Resource>().Where(r => r != IH.Shared.Resource.None).ToArray();
+        var b = new MeshBuilder();
+        for (int i = 0; i < all.Length; i++)
+            Models.Resource(b, all[i], new Vector3((i % 12 - 5.5f) * 0.8f, 0, (i / 12 - 1.5f) * 0.95f), MapView.ResourceColor(all[i]));
+        root.AddChild(new MeshInstance3D { Mesh = b.Commit(), MaterialOverride = mat, Scale = Vector3.One * 1.5f });
+        await Shot("12_resources");
+        root.QueueFree();
+        foreach (var c in hud) c.Visible = true;
+        game.Map.Zoom = 1f;
+    }
+
     private async Task Run()
     {
         DirAccess.MakeDirRecursiveAbsolute(_dir);
@@ -159,6 +191,7 @@ public partial class DemoTour : Node
             await Shot("08c_odds");
             game.ShowOdds(null, null);
         }
+        await Gallery(game, w);
         game.Map.Zoom = 0.5f; game.Map.ApplyCamera(); await Shot("09_lod_medium");
         game.Map.Zoom = 0.2f; game.Map.ApplyCamera(); await Shot("10_lod_far");
         GD.Print($"tour: done at turn {w.Turn}, ping {net.PingMs} ms");

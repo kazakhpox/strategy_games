@@ -459,58 +459,6 @@ public partial class MapView : Node3D
     }
 
     // ------------------------------------------------------- mesh helpers
-    private sealed class MeshBuilder
-    {
-        private readonly SurfaceTool _st = new();
-        public int Count;
-        public MeshBuilder() => _st.Begin(Mesh.PrimitiveType.Triangles);
-
-        /// <summary>Adds a triangle whose lit side faces roughly along <paramref name="outward"/>.</summary>
-        public void Tri(Vector3 a, Vector3 b, Vector3 c, Vector3 outward, Color color)
-        {
-            var n = (c - a).Cross(b - a);
-            if (n.LengthSquared() < 1e-12f) return;
-            n = n.Normalized();
-            if (n.Dot(outward) < 0) { (b, c) = (c, b); n = -n; }
-            _st.SetNormal(n); _st.SetColor(color); _st.AddVertex(a);
-            _st.SetNormal(n); _st.SetColor(color); _st.AddVertex(b);
-            _st.SetNormal(n); _st.SetColor(color); _st.AddVertex(c);
-            Count += 3;
-        }
-
-        public void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 outward, Color color)
-        {
-            Tri(a, b, c, outward, color);
-            Tri(a, c, d, outward, color);
-        }
-
-        public void Pyramid(Vector3 baseCenter, float radius, float height, int sides, Color color, float turn = 0)
-        {
-            var apex = baseCenter + new Vector3(0, height, 0);
-            for (int i = 0; i < sides; i++)
-            {
-                float a0 = turn + Mathf.Tau * i / sides, a1 = turn + Mathf.Tau * (i + 1) / sides;
-                var p0 = baseCenter + new Vector3(Mathf.Cos(a0), 0, Mathf.Sin(a0)) * radius;
-                var p1 = baseCenter + new Vector3(Mathf.Cos(a1), 0, Mathf.Sin(a1)) * radius;
-                var mid = (p0 + p1) / 2 - baseCenter;
-                Tri(p0, p1, apex, mid + new Vector3(0, radius * 0.5f, 0), color);
-            }
-        }
-
-        public void Box(Vector3 center, Vector3 size, Color color)
-        {
-            var h = size / 2;
-            Vector3 P(int x, int y, int z) => center + new Vector3(h.X * x, h.Y * y, h.Z * z);
-            Quad(P(-1, 1, -1), P(1, 1, -1), P(1, 1, 1), P(-1, 1, 1), Vector3.Up, color);
-            Quad(P(-1, -1, 1), P(1, -1, 1), P(1, 1, 1), P(-1, 1, 1), Vector3.Back, color);
-            Quad(P(-1, -1, -1), P(1, -1, -1), P(1, 1, -1), P(-1, 1, -1), Vector3.Forward, color);
-            Quad(P(1, -1, -1), P(1, -1, 1), P(1, 1, 1), P(1, 1, -1), Vector3.Right, color);
-            Quad(P(-1, -1, -1), P(-1, -1, 1), P(-1, 1, 1), P(-1, 1, -1), Vector3.Left, color);
-        }
-
-        public Mesh? Commit() => Count == 0 ? null : _st.Commit();
-    }
-
     /// <summary>Marker colour by resource class: bonus green, strategic red, luxury violet.</summary>
     public static Color ResourceColor(Resource r) => Rules.Res(r).Class switch
     {
@@ -596,6 +544,8 @@ public partial class MapView : Node3D
                     var trunkTop = new Vector3(0, 0.1f, 0);
                     foreach (var off in new[] { new Vector3(-0.42f, 0, 0.1f), new Vector3(0.1f, 0, -0.42f), new Vector3(0.4f, 0, 0.3f), new Vector3(-0.05f, 0, 0.45f) })
                     {
+                        // a clearing around the resource, so the trees do not hide it
+                        if (t.Resource != Resource.None && (off - new Vector3(-0.34f, 0, -0.32f)).Length() < 0.5f) continue;
                         decor.Pyramid(c + off + trunkTop, 0.21f, 0.5f, 5, leaf);
                         decor.Pyramid(c + off + trunkTop * 3.4f, 0.15f, 0.36f, 5, leaf.Lightened(0.08f));
                     }
@@ -642,11 +592,9 @@ public partial class MapView : Node3D
                 }
                 if (t.Resource != Resource.None)
                 {
-                    var rc = Shade(ResourceColor(t.Resource));
-                    var rp = c + new Vector3(-0.38f, 0.3f, -0.36f);
-                    decor.Pyramid(rp, 0.15f, 0.2f, 4, rc);
-                    decor.Pyramid(rp, 0.15f, -0.2f, 4, rc.Darkened(0.2f));
-                    decor.Box(c + new Vector3(-0.38f, 0.04f, -0.36f), new Vector3(0.05f, 0.14f, 0.05f), Shade(Colors.Black));
+                    decor.Tint = Shade;
+                    Models.Resource(decor, t.Resource, c + new Vector3(-0.34f, 0.005f, -0.32f), ResourceColor(t.Resource));
+                    decor.Tint = null;
                 }
             }
         ch.Terrain.Mesh = terrain.Commit();
@@ -695,30 +643,11 @@ public partial class MapView : Node3D
             if (v.Type != u.Type || v.Owner != u.Owner)
             {
                 v.Type = u.Type; v.Owner = u.Owner;
-                bool civilian = u.Def.Role is UnitRole.Settler or UnitRole.Worker or UnitRole.Missionary;
-                if (u.Def.Sea)
-                {
-                    // a hull with a sail in the owner's colour
-                    v.Body.Mesh = _hullMesh; v.Body.Position = new Vector3(0, 0.1f, 0); v.Body.MaterialOverride = _wallMat;
-                    float len = civilian ? 0.75f : 0.9f + Math.Min(0.5f, u.Def.Str / 70f);
-                    v.Body.Scale = new Vector3(1, 1, len);
-                    v.Head.Mesh = _sailMesh; v.Head.Position = new Vector3(0, 0.5f, 0); v.Head.MaterialOverride = OwnerMat(u.Owner);
-                }
-                else
-                {
-                    v.Body.Mesh = civilian ? _civilMesh : _soldierMesh;
-                    v.Body.Position = new Vector3(0, civilian ? 0.2f : 0.31f, 0);
-                    v.Head.Mesh = _headMesh;
-                    v.Head.Position = new Vector3(0, civilian ? 0.52f : 0.74f, 0);
-                    v.Body.MaterialOverride = OwnerMat(u.Owner);
-                    v.Head.MaterialOverride = civilian ? _wallMat : OwnerMat(u.Owner);
-                    float s = 0.85f + Math.Min(0.5f, u.Def.Str / 60f);
-                    v.Body.Scale = civilian ? Vector3.One : new Vector3(s, 1, s);
-                    // abilities show in the figure: flyers hover, constructs are stone blocks, casters carry a pale head
-                    if (u.Def.X.Flying) { v.Body.Position += new Vector3(0, 0.45f, 0); v.Head.Position += new Vector3(0, 0.45f, 0); }
-                    if (u.Def.X.Construct) { v.Body.Mesh = _civilMesh; v.Body.Scale = new Vector3(1.15f, 1.5f, 1.15f); v.Body.Position = new Vector3(0, 0.3f, 0); v.Head.MaterialOverride = _wallMat; }
-                    if (u.Def.X.Ranged > 0 || u.Def.X.HealAura > 0) v.Head.MaterialOverride = _wallMat;
-                }
+                v.Body.Mesh = Models.Unit(u.Def, u.Owner, OwnerColor(u.Owner));
+                v.Body.MaterialOverride = _terrainMat;
+                v.Body.Position = new Vector3(0, u.Def.X.Flying ? 0.35f : 0, 0);
+                v.Body.Scale = Vector3.One * 1.15f;
+                v.Head.Visible = false;
             }
             bool mine = u.Owner == W.MyId, selected = u.Id == SelectedUnit;
             v.Ring.Visible = selected;
