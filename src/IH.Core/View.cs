@@ -59,7 +59,7 @@ public sealed partial class Game
     public CityDto CityPublicDto(City c) => new()
     {
         Id = c.Id, Owner = c.Owner, Tile = c.Tile, Pop = c.Pop, Radius = c.Radius, Name = c.Name,
-        Capital = c.Capital, Disorder = c.DisorderTurns > 0,
+        Capital = c.Capital, Disorder = c.DisorderTurns > 0, Religion = c.Religion,
     };
 
     private CityDto CityOwnDto(City c)
@@ -72,6 +72,7 @@ public sealed partial class Game
             Culture = c.Culture, CultureRate = Math.Max(1, (int)Math.Round(c.CulRate)), Happy = c.Happy, Unhappy = c.Unhappy,
             Unrest = c.Unrest, DisorderTurns = c.DisorderTurns, Maint = (int)Math.Round(c.Maint + c.BuildingUpkeep),
             Queue = c.Queue.ToArray(), Buildings = c.Buildings.OrderBy(x => x).ToArray(), Worked = c.Worked.ToArray(),
+            Pressure = c.Pressure.OrderByDescending(x => x.Value).SelectMany(x => new[] { x.Key, x.Value }).ToArray(),
         };
         return d;
     }
@@ -128,6 +129,13 @@ public sealed partial class Game
             Proposals = S.Proposals.Where(x => x.To == pid || x.From == pid)
                 .Select(x => new ProposalDto { Id = x.Id, From = x.From, To = x.To, Kind = (byte)x.Kind }).ToArray(),
             Demo = Demographics(p),
+            Civic = p.Civic ?? "", Civics = p.Civics.OrderBy(x => x).ToArray(), CivicProgress = p.CivicProgress, CivicLevel = p.CivicLevel,
+            CultureRate = (int)Math.Round(p.CultureRate), MyReligion = FoundedBy(pid)?.Id ?? 0,
+            Religions = S.Religions.Select(r => new ReligionDto
+            {
+                Id = r.Id, Name = r.Name, Founder = r.Founder, Belief = r.Belief, HolyCity = r.HolyCity,
+                Cities = S.Cities.Values.Count(c => c.Religion == r.Id),
+            }).ToArray(),
             Faith = p.Faith, FaithRate = (int)p.FaithRate, Favor = p.Favor, FavorRate = (int)p.FavorRate, Luxuries = p.Luxuries,
             Chair = S.Chair, CongressIn = Rules.CongressPeriod - S.Turn % Rules.CongressPeriod,
             Resources = p.Resources.ToArray(),

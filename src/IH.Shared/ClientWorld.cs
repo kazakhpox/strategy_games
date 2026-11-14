@@ -103,6 +103,13 @@ public sealed class ClientWorld
             case EventKind.Proposal:
                 return $"«{PlayerName(e.A)}» предлагает: {(e.B == (int)ProposalKind.Peace ? "мир" : "открытые границы")}";
             case EventKind.Info: return e.S;
+            case EventKind.CivicDone: return $"Принят институт: {Rules.Civic(e.S)?.Name ?? e.S}";
+            case EventKind.ReligionFounded: return $"«{PlayerName(e.A)}» основывает религию «{e.S}»";
+            case EventKind.CityConverted:
+            {
+                var rel = Me.Religions.FirstOrDefault(r => r.Id == e.B);
+                return rel == null ? $"Город {e.S} больше не следует ни одной религии" : $"Город {e.S} принял религию «{rel.Name}»";
+            }
             case EventKind.Congress:
                 return e.A < 0 ? "Всемирный конгресс: голосов не подано, председатель не избран"
                     : $"Всемирный конгресс: председателем избран «{PlayerName(e.A)}» ({e.B} голосов) — +10% золота и культуры на {Rules.CongressPeriod} ходов";

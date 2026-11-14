@@ -118,7 +118,12 @@ public sealed partial class Game
         return t;
     }
 
-    public double UnitStr(Unit u) => u.Def.Str * (1 + 0.05 * P(u.Owner).Future[Rules.BranchNano]);
+    public double UnitStr(Unit u) => u.Def.Str * (1 + 0.05 * P(u.Owner).Future[Rules.BranchNano] + P(u.Owner).CivicFx.StrPct / 100.0);
+
+    /// <summary>Missionaries may walk into any territory; everyone else needs peace-time permission.</summary>
+    public bool CanEnter(Unit u, int tile) => u.Def.Role == UnitRole.Missionary || CanEnterTerritory(u.Owner, tile);
+    public Religion? ReligionOf(int id) => id <= 0 ? null : S.Religions.FirstOrDefault(r => r.Id == id);
+    public Religion? FoundedBy(int pid) => S.Religions.FirstOrDefault(r => r.Founder == pid);
     public bool IsMilitary(Unit u) => u.Def.Role == UnitRole.Military;
     public double Power(int pid) => UnitsOf(pid).Where(IsMilitary).Sum(u => UnitStr(u) * u.Hp / 100.0);
 
@@ -185,6 +190,12 @@ public sealed partial class Game
             case CmdType.BuyTile: return CmdBuyTile(p, c.A, c.B);
             case CmdType.Gift: return CmdGift(p, c.A, c.B, c.C);
             case CmdType.Vote: return CmdVote(p, c.A, c.B);
+            case CmdType.SetCivic:
+                if (!Rules.AvailableCivics(p.Civics, p.CivicLevel).Any(x => x.Id == c.S)) return "Этот институт сейчас недоступен";
+                p.Civic = c.S; return null;
+            case CmdType.FoundReligion: return CmdFoundReligion(p, c.A, c.B);
+            case CmdType.Recruit: return CmdRecruit(p, c.A);
+            case CmdType.Preach: return CmdPreach(p, c.A);
             case CmdType.SetProduction: return CmdProduction(p, c.A, c.S, c.B);
             case CmdType.RemoveQueue:
             {
@@ -238,7 +249,7 @@ public sealed partial class Game
         return Grid.FindPath(u.Tile, target, (from, to) =>
         {
             int c = Rules.MoveCost(S.Tiles[from], S.Tiles[to], mover);
-            if (c < 0 || !CanEnterTerritory(u.Owner, to)) return -1;
+            if (c < 0 || !CanEnter(u, to)) return -1;
             if (to != target)
             {
                 var city = CityAt(to);
@@ -280,7 +291,7 @@ public sealed partial class Game
     {
         int from = u.Tile;
         int cost = Rules.MoveCost(S.Tiles[from], S.Tiles[to], MoverOf(u));
-        if (cost < 0 || !CanEnterTerritory(u.Owner, to)) return false;
+        if (cost < 0 || !CanEnter(u, to)) return false;
         var others = At(to).Where(x => x.Owner != u.Owner).ToList();
         var city = CityAt(to);
         bool military = IsMilitary(u);
@@ -414,6 +425,7 @@ public sealed partial class Game
             int i = Rules.UnitIndex(item[2..]);
             if (i < 0) return false;
             var d = Rules.Units[i];
+            if (d.Role == UnitRole.Missionary) return false; // recruited with faith, never built
             return p.Has(d.Tech) && p.HasResource(d.Needs) && (!d.Sea || Coastal(city));
         }
         if (item.StartsWith("b:"))
@@ -534,6 +546,78 @@ public sealed partial class Game
         p.Favor -= amount;
         S.Votes[candidate] = S.Votes.GetValueOrDefault(candidate) + amount;
         return null;
+    }
+
+    private string? CmdFoundReligion(Player p, int nameIdx, int belief)
+    {
+        if (FoundedBy(p.Id) != null) return "Вы уже основали религию";
+        var holy = CitiesOf(p.Id).FirstOrDefault(c => c.Capital);
+        if (holy == null) return "Для основания религии нужна столица";
+        if (nameIdx < 0 || nameIdx >= Rules.ReligionNames.Length || belief < 0 || belief >= Rules.Beliefs.Length) return "Неверный выбор";
+        if (S.Religions.Any(r => r.Name == Rules.ReligionNames[nameIdx])) return "Религия с таким названием уже существует";
+        if (S.Religions.Any(r => r.Belief == belief)) return "Это верование уже принято другой религией";
+        int price = Rules.ReligionPrice(S.Religions.Count);
+        if (p.Faith < price) return $"Недостаточно веры (нужно {price})";
+        p.Faith -= price;
+        var rel = new Religion { Id = S.Religions.Count + 1, Founder = p.Id, Belief = belief, HolyCity = holy.Id, Name = Rules.ReligionNames[nameIdx] };
+        S.Religions.Add(rel);
+        holy.Pressure[rel.Id] = holy.Pressure.GetValueOrDefault(rel.Id) + 150;
+        UpdateCityReligion(holy);
+        Emit(EventKind.ReligionFounded, p.Id, rel.Id, s: rel.Name);
+        return null;
+    }
+
+    private string? CmdRecruit(Player p, int cityId)
+    {
+        var city = OwnCity(p, cityId, out var err); if (city == null) return err;
+        int rel = FoundedBy(p.Id)?.Id ?? city.Religion;
+        if (rel == 0) return "В этом городе нет религии, которую мог бы нести миссионер";
+        if (p.Faith < Rules.MissionaryFaith) return $"Недостаточно веры (нужно {Rules.MissionaryFaith})";
+        p.Faith -= Rules.MissionaryFaith;
+        var u = AddUnit(p.Id, Rules.UnitIndex("missionary"), city.Tile);
+        u.Religion = rel; u.Moves = 0;
+        return null;
+    }
+
+    private string? CmdPreach(Player p, int unitId)
+    {
+        var u = Own(p, unitId, out var err); if (u == null) return err;
+        if (u.Def.Role != UnitRole.Missionary) return "Проповедовать может только миссионер";
+        var city = CityAt(u.Tile);
+        if (city == null) return "Миссионер должен стоять в городе";
+        city.Pressure[u.Religion] = city.Pressure.GetValueOrDefault(u.Religion) + Rules.PreachPressure;
+        RemoveUnit(u);
+        UpdateCityReligion(city);
+        return null;
+    }
+
+    /// <summary>A city follows the religion with the most pressure, once that pressure is noticeable.</summary>
+    public void UpdateCityReligion(City c)
+    {
+        int best = 0, bestP = Rules.ConvertThreshold - 1;
+        foreach (var (id, pr) in c.Pressure.OrderBy(x => x.Key))
+            if (pr > bestP || (pr == bestP && id == c.Religion)) { best = id; bestP = pr; }
+        if (best == 0 || best == c.Religion) return;
+        c.Religion = best;
+        Emit(EventKind.CityConverted, c.Id, best, s: c.Name, only: c.Owner);
+    }
+
+    /// <summary>Passive spread: every city radiates its religion to cities nearby; holy cities radiate more.</summary>
+    private void SpreadReligion()
+    {
+        if (S.Religions.Count == 0) return;
+        var cities = S.Cities.Values.OrderBy(c => c.Id).ToList();
+        var add = new List<(City city, int rel, int amount)>();
+        foreach (var src in cities)
+        {
+            if (src.Religion == 0) continue;
+            bool holy = ReligionOf(src.Religion)?.HolyCity == src.Id;
+            add.Add((src, src.Religion, holy ? 8 : 3));
+            foreach (var dst in cities)
+                if (dst != src && Grid.Distance(src.Tile, dst.Tile) <= Rules.ReligionRange) add.Add((dst, src.Religion, holy ? 3 : 1));
+        }
+        foreach (var (city, rel, amount) in add) city.Pressure[rel] = city.Pressure.GetValueOrDefault(rel) + amount;
+        foreach (var c in cities) UpdateCityReligion(c);
     }
 
     private string? CmdUpgrade(Player p, int unitId)

@@ -25,7 +25,7 @@ public sealed record ResDef(Resource Id, string Name, ResClass Class, int F, int
 
 /// <summary>What a unit is able to cross; decides movement cost and passability.</summary>
 public readonly record struct Mover(bool Sea, bool Coast, bool Ocean);
-public enum UnitRole : byte { Military, Settler, Worker, Scout }
+public enum UnitRole : byte { Military, Settler, Worker, Scout, Missionary }
 
 /// <summary>Static tile data; identical representation on server and client.</summary>
 public struct TileData
@@ -164,6 +164,7 @@ public static class Rules
         new("tank", "Танк", 260, 28, 2, "combined_arms", Needs: Resource.Oil),
         new("mech_infantry", "Мотопехота", 320, 32, 2, "robotics", CityDefPct: 25, Needs: Resource.Aluminium),
         new("nano_trooper", "Нанодесант", 420, 42, 2, "f0_1", CityDefPct: 25),
+        new("missionary", "Миссионер", 80, 0, 2, null, UnitRole.Missionary),
         // ---- navy
         new("work_boat", "Рыбацкое судно", 30, 0, 3, "sailing", UnitRole.Worker, Sea: true),
         new("galley", "Галера", 45, 3, 3, "sailing", Sea: true),
@@ -501,6 +502,126 @@ public static class Rules
         if (item.StartsWith("b:")) return Building(item[2..])?.Cost ?? -1;
         return -1;
     }
+
+    // --------------------------------------------------------------- civics
+    /// <summary>Additive empire-wide bonuses; civics and religious beliefs are both expressed with it.</summary>
+    public sealed class Bonus
+    {
+        public int SciPct, GoldPct, ProdPct, CulPct, FaithPct, StrPct, UpkeepCutPct, Happy, Calm, Food, Culture, Favor;
+        public void Add(Bonus o)
+        {
+            SciPct += o.SciPct; GoldPct += o.GoldPct; ProdPct += o.ProdPct; CulPct += o.CulPct; FaithPct += o.FaithPct; StrPct += o.StrPct;
+            UpkeepCutPct += o.UpkeepCutPct; Happy += o.Happy; Calm += o.Calm; Food += o.Food; Culture += o.Culture; Favor += o.Favor;
+        }
+        public string Describe()
+        {
+            var p = new List<string>();
+            if (SciPct != 0) p.Add($"+{SciPct}% науки");
+            if (GoldPct != 0) p.Add($"+{GoldPct}% золота");
+            if (ProdPct != 0) p.Add($"+{ProdPct}% производства");
+            if (CulPct != 0) p.Add($"+{CulPct}% культуры");
+            if (FaithPct != 0) p.Add($"+{FaithPct}% веры");
+            if (StrPct != 0) p.Add($"+{StrPct}% силы юнитов");
+            if (UpkeepCutPct != 0) p.Add($"-{UpkeepCutPct}% содержания");
+            if (Happy != 0) p.Add($"+{Happy} довольства в городах");
+            if (Calm != 0) p.Add($"-{Calm} брожения за ход");
+            if (Food != 0) p.Add($"+{Food} пищи в городах");
+            if (Culture != 0) p.Add($"+{Culture} культуры в городах");
+            if (Favor != 0) p.Add($"+{Favor} одобрения за ход");
+            return string.Join(", ", p);
+        }
+    }
+
+    public sealed record CivicDef(string Id, string Name, int Cost, int Era, string[] Prereqs, Bonus Effect, int Level = 0);
+
+    private static CivicDef C(string id, string name, int cost, int era, Bonus effect, params string[] pre) => new(id, name, cost, era, pre, effect);
+
+    /// <summary>The social institutions tree, advanced by culture.</summary>
+    public static readonly CivicDef[] Civics =
+    {
+        C("c_tribal", "Племенной строй", 25, 0, new Bonus { Happy = 1 }),
+        C("c_craft", "Ремесло", 40, 0, new Bonus { ProdPct = 10 }, "c_tribal"),
+        C("c_trade", "Внешняя торговля", 40, 0, new Bonus { GoldPct = 10 }, "c_tribal"),
+        C("c_rites", "Обряды предков", 50, 0, new Bonus { FaithPct = 25 }, "c_tribal"),
+        C("c_state", "Государственная служба", 70, 0, new Bonus { UpkeepCutPct = 15 }, "c_craft", "c_trade"),
+        C("c_military", "Воинская традиция", 70, 0, new Bonus { StrPct = 10 }, "c_craft"),
+
+        C("c_philosophy", "Политическая философия", 110, 1, new Bonus { SciPct = 10 }, "c_state", "c_rites"),
+        C("c_drama", "Драма и поэзия", 110, 1, new Bonus { CulPct = 20 }, "c_rites"),
+        C("c_games", "Игры и отдых", 130, 1, new Bonus { Happy = 2 }, "c_state"),
+        C("c_theology", "Теология", 150, 1, new Bonus { FaithPct = 25, Calm = 1 }, "c_drama"),
+
+        C("c_feudal", "Феодальный уклад", 280, 2, new Bonus { Food = 2 }, "c_state", "c_military"),
+        C("c_guilds", "Цеховое право", 300, 2, new Bonus { GoldPct = 15 }, "c_games", "c_philosophy"),
+        C("c_divine", "Божественное право", 320, 2, new Bonus { Happy = 2, CulPct = 10 }, "c_theology"),
+        C("c_merc", "Наёмные армии", 300, 2, new Bonus { UpkeepCutPct = 10, StrPct = 5 }, "c_feudal"),
+
+        C("c_humanism", "Гуманизм", 550, 3, new Bonus { SciPct = 15 }, "c_guilds", "c_drama"),
+        C("c_diplomacy", "Дипломатическая служба", 550, 3, new Bonus { Favor = 3 }, "c_guilds"),
+        C("c_reform", "Реформация", 600, 3, new Bonus { FaithPct = 50 }, "c_divine"),
+
+        C("c_national", "Национализм", 1100, 4, new Bonus { StrPct = 15, Calm = 2 }, "c_humanism", "c_merc"),
+        C("c_capital", "Капитализм", 1200, 4, new Bonus { GoldPct = 20 }, "c_diplomacy"),
+        C("c_urban", "Урбанизация", 1200, 4, new Bonus { ProdPct = 15 }, "c_humanism"),
+
+        C("c_ideology", "Идеология", 2000, 5, new Bonus { SciPct = 10, ProdPct = 10 }, "c_national", "c_capital"),
+        C("c_welfare", "Социальные гарантии", 2200, 5, new Bonus { Happy = 3, Calm = 3 }, "c_urban", "c_reform"),
+        C("c_global", "Глобализация", 3000, 6, new Bonus { SciPct = 20, Favor = 5 }, "c_ideology", "c_welfare"),
+    };
+
+    private static readonly Dictionary<string, CivicDef> CivicById = Civics.ToDictionary(c => c.Id);
+    private static readonly Bonus FutureCivicStep = new() { CulPct = 3, GoldPct = 2, Calm = 1 };
+
+    /// <summary>After the last institution the tree continues forever with "Общественное развитие N" (cf_N).</summary>
+    public static CivicDef? Civic(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return null;
+        if (CivicById.TryGetValue(id, out var c)) return c;
+        if (!id.StartsWith("cf_") || !int.TryParse(id.AsSpan(3), out int n) || n < 1 || n > 100000) return null;
+        return new CivicDef(id, $"Общественное развитие {n}", (int)(4000 * Math.Pow(1 + 0.5 * (n - 1), 1.5)), 7 + (n - 1) / 3,
+            n == 1 ? new[] { "c_global" } : new[] { $"cf_{n - 1}" }, FutureCivicStep, n);
+    }
+
+    public static bool HasCivic(ICollection<string> known, int level, string id)
+        => known.Contains(id) || (Civic(id) is { Level: > 0 } c && level >= c.Level);
+
+    public static List<CivicDef> AvailableCivics(ICollection<string> known, int level)
+    {
+        var res = new List<CivicDef>();
+        foreach (var c in Civics)
+            if (!known.Contains(c.Id) && c.Prereqs.All(known.Contains)) res.Add(c);
+        var next = Civic($"cf_{level + 1}")!;
+        if (next.Prereqs.All(p => HasCivic(known, level, p))) res.Add(next);
+        return res;
+    }
+
+    public static Bonus CivicBonus(IEnumerable<string> known, int level)
+    {
+        var b = new Bonus();
+        foreach (string id in known) if (CivicById.TryGetValue(id, out var c)) b.Add(c.Effect);
+        for (int i = 0; i < level; i++) b.Add(FutureCivicStep);
+        return b;
+    }
+
+    // ------------------------------------------------------------- religion
+    public sealed record BeliefDef(string Name, Bonus Effect);
+
+    /// <summary>A religion has one belief; it applies to every city that follows the religion, whoever owns it.</summary>
+    public static readonly BeliefDef[] Beliefs =
+    {
+        new("Священные рощи", new Bonus { Culture = 2 }),
+        new("Трудолюбие", new Bonus { ProdPct = 10 }),
+        new("Мудрость писаний", new Bonus { SciPct = 10 }),
+        new("Благословение урожая", new Bonus { Food = 2 }),
+        new("Умиротворение", new Bonus { Happy = 2, Calm = 2 }),
+        new("Десятина", new Bonus { GoldPct = 15 }),
+    };
+
+    public static readonly string[] ReligionNames =
+        { "Путь Солнца", "Культ Предков", "Учение Звёзд", "Завет Гор", "Круг Жизни", "Орден Моря", "Небесный Путь", "Вера Пламени" };
+
+    public const int MissionaryFaith = 80, PreachPressure = 60, ConvertThreshold = 25, ReligionRange = 6;
+    public static int ReligionPrice(int alreadyFounded) => 100 + 60 * alreadyFounded;
 
     public static readonly int[] PlayerColors =
     {

@@ -16,6 +16,12 @@ public static class SimpleAI
         g.RefreshEconomy(p);
         Research(g, p);
         Finance(g, p);
+        if (p.Civic == null)
+        {
+            var civic = Rules.AvailableCivics(p.Civics, p.CivicLevel).OrderBy(c => c.Cost).ThenBy(c => c.Id, StringComparer.Ordinal).First();
+            Do(g, p, CmdType.SetCivic, s: civic.Id);
+        }
+        Faith(g, p);
         // shortly before each congress, back ourselves with half of the accumulated favor
         if (g.S.Turn % Rules.CongressPeriod == Rules.CongressPeriod - 2 && p.Favor >= 10) Do(g, p, CmdType.Vote, p.Id, p.Favor / 2);
         // faith finishes peaceful projects
@@ -30,6 +36,7 @@ public static class SimpleAI
             {
                 case UnitRole.Settler: Settler(g, p, u); break;
                 case UnitRole.Worker: Worker(g, p, u); break;
+                case UnitRole.Missionary: Missionary(g, p, u); break;
                 default: Soldier(g, p, u); break;
             }
         }
@@ -53,6 +60,37 @@ public static class SimpleAI
         uint h = 2166136261;
         foreach (char ch in s) h = (h ^ ch) * 16777619;
         return (int)(h & 0x7FFFFFFF);
+    }
+
+    private static void Faith(Game g, Player p)
+    {
+        if (g.FoundedBy(p.Id) == null && g.S.Religions.Count < Rules.Beliefs.Length && p.Faith >= Rules.ReligionPrice(g.S.Religions.Count)
+            && g.CitiesOf(p.Id).Any(c => c.Capital))
+        {
+            int name = Enumerable.Range(0, Rules.ReligionNames.Length).First(i => g.S.Religions.All(r => r.Name != Rules.ReligionNames[i]));
+            int belief = Enumerable.Range(0, Rules.Beliefs.Length).Select(i => (i + p.Id) % Rules.Beliefs.Length).First(i => g.S.Religions.All(r => r.Belief != i));
+            Do(g, p, CmdType.FoundReligion, name, belief);
+        }
+        // a founder keeps one missionary on the road
+        var mine = g.FoundedBy(p.Id);
+        if (mine != null && p.Faith >= Rules.MissionaryFaith + 60 && !g.UnitsOf(p.Id).Any(u => u.Def.Role == UnitRole.Missionary)
+            && g.S.Cities.Values.Any(c => c.Religion != mine.Id && p.KnownTiles[c.Tile] != 0))
+        {
+            var home = g.CitiesOf(p.Id).OrderByDescending(c => c.Capital).ThenBy(c => c.Id).FirstOrDefault();
+            if (home != null) Do(g, p, CmdType.Recruit, home.Id);
+        }
+    }
+
+    private static void Missionary(Game g, Player p, Unit u)
+    {
+        var here = g.CityAt(u.Tile);
+        if (here != null && here.Religion != u.Religion) { Do(g, p, CmdType.Preach, u.Id); return; }
+        if (u.Goto >= 0 || u.Moves <= 0) return;
+        var target = g.S.Cities.Values.Where(c => c.Religion != u.Religion && p.KnownTiles[c.Tile] != 0 && !g.AtWar(p.Id, c.Owner))
+            .OrderBy(c => c.Owner == p.Id ? 0 : 1).ThenBy(c => g.Grid.Distance(u.Tile, c.Tile)).ThenBy(c => c.Id).Take(3).ToList();
+        foreach (var c in target)
+            if (Do(g, p, CmdType.MoveUnit, u.Id, c.Tile) == null) return;
+        if (target.Count == 0) Do(g, p, CmdType.Disband, u.Id);
     }
 
     private static void Finance(Game g, Player p)

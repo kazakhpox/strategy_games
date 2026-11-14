@@ -16,6 +16,10 @@ public enum CmdType : byte
     BuyTile,    // A=city, B=tile
     Gift,       // A=player, B=0 gold / 1 favor, C=amount
     Vote,       // A=candidate, B=favor to spend
+    SetCivic,       // S=civic id
+    FoundReligion,  // A=name index, B=belief index
+    Recruit,        // A=city: buy a missionary with faith
+    Preach,         // A=unit: spend a missionary on the city it stands in
 }
 
 public enum EventKind : byte
@@ -39,6 +43,9 @@ public enum EventKind : byte
     TurnStarted,     // A=turn
     Info,            // S=text
     Congress,        // A=new chair (-1 none), B=votes
+    CivicDone,       // S=civic id
+    ReligionFounded, // A=player, B=religion id, S=name
+    CityConverted,   // A=city, B=religion id (0 = none), S=city name
 }
 
 public enum ProposalKind : byte { Peace, OpenBorders }
@@ -153,22 +160,24 @@ public sealed class CityDetail : IWire
         Happy, Unhappy, Unrest, DisorderTurns, Maint;
     public string[] Queue = Array.Empty<string>(), Buildings = Array.Empty<string>();
     public int[] Worked = Array.Empty<int>();
+    /// <summary>Religious pressure in the city: pairs of (religion id, points).</summary>
+    public int[] Pressure = Array.Empty<int>();
     public void Sync(Wire w)
     {
         w.I(ref Food); w.I(ref FoodNeed); w.I(ref FoodRate); w.I(ref Prod); w.I(ref ProdRate); w.I(ref Commerce);
         w.I(ref Science); w.I(ref Gold); w.I(ref Culture); w.I(ref CultureRate); w.I(ref Happy); w.I(ref Unhappy);
-        w.I(ref Unrest); w.I(ref DisorderTurns); w.I(ref Maint); w.SA(ref Queue); w.SA(ref Buildings); w.IA(ref Worked);
+        w.I(ref Unrest); w.I(ref DisorderTurns); w.I(ref Maint); w.SA(ref Queue); w.SA(ref Buildings); w.IA(ref Worked); w.IA(ref Pressure);
     }
 }
 
 public sealed class CityDto : IWire
 {
-    public int Id, Owner, Tile, Pop, Radius; public string Name = ""; public bool Capital, Disorder;
+    public int Id, Owner, Tile, Pop, Radius, Religion; public string Name = ""; public bool Capital, Disorder;
     public CityDetail? Detail; // only for the owner
     public void Sync(Wire w)
     {
         w.I(ref Id); w.I(ref Owner); w.I(ref Tile); w.I(ref Pop); w.I(ref Radius); w.S(ref Name);
-        w.B(ref Capital); w.B(ref Disorder); w.O(ref Detail);
+        w.B(ref Capital); w.B(ref Disorder); w.I(ref Religion); w.O(ref Detail);
     }
 }
 
@@ -183,6 +192,12 @@ public sealed class PlayerDto : IWire
         w.B(ref AI); w.B(ref Alive); w.B(ref Connected); w.B(ref EndedTurn); w.B(ref Met); w.B(ref Neutral);
         w.B(ref AtWar); w.B(ref OpenBorders);
     }
+}
+
+public sealed class ReligionDto : IWire
+{
+    public int Id, Founder, Belief, HolyCity, Cities; public string Name = "";
+    public void Sync(Wire w) { w.I(ref Id); w.I(ref Founder); w.I(ref Belief); w.I(ref HolyCity); w.I(ref Cities); w.S(ref Name); }
 }
 
 public sealed class ProposalDto : IWire
@@ -213,6 +228,11 @@ public sealed class MeDto : IWire
     public int[] Resources = Array.Empty<int>();
     /// <summary>Votes cast so far in the current congress session, indexed by player id.</summary>
     public int[] Votes = Array.Empty<int>();
+    // social institutions (driven by culture) and religion
+    public string Civic = "";
+    public string[] Civics = Array.Empty<string>();
+    public int CivicProgress, CivicLevel, CultureRate, MyReligion;
+    public ReligionDto[] Religions = Array.Empty<ReligionDto>();
     public string Research = "";
     public string[] Known = Array.Empty<string>();
     public int[] Future = new int[4];
@@ -229,6 +249,8 @@ public sealed class MeDto : IWire
         w.A(ref Available); w.A(ref Proposals); w.A(ref Demo);
         w.I(ref Faith); w.I(ref FaithRate); w.I(ref Favor); w.I(ref FavorRate); w.I(ref Luxuries); w.I(ref Chair); w.I(ref CongressIn);
         w.IA(ref Resources); w.IA(ref Votes);
+        w.S(ref Civic); w.SA(ref Civics); w.I(ref CivicProgress); w.I(ref CivicLevel); w.I(ref CultureRate); w.I(ref MyReligion);
+        w.A(ref Religions);
     }
 }
 

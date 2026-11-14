@@ -31,6 +31,8 @@ public sealed class BalanceConfig
 public sealed class Unit
 {
     public int Id, Owner, Type, Tile, Hp = 100, Moves, WorkTurns, Goto = -1;
+    /// <summary>For missionaries: the religion they spread.</summary>
+    public int Religion;
     public WorkKind Work;
     public bool Fortified;
     public UnitDef Def => Rules.Units[Type];
@@ -45,6 +47,9 @@ public sealed class City
     public List<string> Queue = new();
     /// <summary>Tiles bought with gold; they stay with the city regardless of its cultural radius.</summary>
     public List<int> ExtraTiles = new();
+    /// <summary>Majority religion (0 = none) and accumulated pressure per religion id.</summary>
+    public int Religion;
+    public Dictionary<int, int> Pressure = new();
     public HashSet<string> Buildings = new();
     // derived each refresh
     public List<int> Worked = new();
@@ -65,6 +70,13 @@ public sealed class Player
     public long TechPoints;
     public double SciFrac;
     public int Faith, Favor, Luxuries;
+    // social institutions
+    public HashSet<string> Civics = new();
+    public string? Civic;
+    public int CivicLevel, CivicProgress;
+    public double CultureRate;
+    /// <summary>Sum of all adopted institutions (derived every refresh).</summary>
+    public Rules.Bonus CivicFx = new();
     public double FaithRate, FavorRate;
     /// <summary>Resources connected by this empire (derived every refresh).</summary>
     public List<int> Resources = new();
@@ -86,6 +98,7 @@ public sealed class Player
     public int TechCount => Known.Count + Future.Sum();
 }
 
+public sealed class Religion { public int Id, Founder, Belief, HolyCity; public string Name = ""; }
 public sealed class Relation { public bool AtWar, OpenBorders, Met; public int SinceTurn; }
 public sealed class Proposal { public int Id, From, To; public ProposalKind Kind; }
 
@@ -104,6 +117,7 @@ public sealed class GameState
     /// <summary>World congress: favor spent per candidate this session, and the current chair.</summary>
     public Dictionary<int, int> Votes = new();
     public int Chair = -1;
+    public List<Religion> Religions = new();
 }
 
 public sealed class GameEvent

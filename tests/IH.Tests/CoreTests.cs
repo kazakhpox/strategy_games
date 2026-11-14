@@ -407,6 +407,113 @@ public class GameTests
     }
 
     [Fact]
+    public void Culture_advances_social_institutions()
+    {
+        var g = New(2, 0);
+        Assert.Null(Cmd(g, 0, CmdType.FoundCity, g.UnitsOf(0).First(u => u.Def.Role == UnitRole.Settler).Id));
+        var p = g.P(0);
+        Assert.NotNull(Cmd(g, 0, CmdType.SetCivic, s: "c_state"));               // prerequisites missing
+        Assert.NotNull(Cmd(g, 0, CmdType.SetCivic, s: "agriculture"));           // not a civic at all
+        Assert.Null(Cmd(g, 0, CmdType.SetCivic, s: "c_tribal"));
+        g.RefreshEconomy(p);
+        int happy = g.CitiesOf(0).Single().Happy;
+        for (int i = 0; i < 12 && !p.Civics.Contains("c_tribal"); i++) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
+        Assert.Contains("c_tribal", p.Civics);
+        Assert.Null(p.Civic);
+        Assert.Contains(g.Events, e => e.Dto.Type == EventKind.CivicDone);
+        g.RefreshEconomy(p);
+        Assert.Equal(happy + 1, g.CitiesOf(0).Single().Happy);                   // the institution's bonus is live
+
+        // bonuses add up and reach combat strength and upkeep
+        p.Civics.UnionWith(new[] { "c_craft", "c_military", "c_trade", "c_state" });
+        g.RefreshEconomy(p);
+        Assert.Equal(10, p.CivicFx.StrPct);
+        Assert.Equal(15, p.CivicFx.UpkeepCutPct);
+        var warrior = g.UnitsOf(0).First(u => u.Def.Id == "warrior");
+        Assert.Equal(2 * 1.1, g.UnitStr(warrior), 6);
+
+        // the tree never ends
+        var known = new HashSet<string>(); int level = 0;
+        for (int i = 0; i < 60; i++)
+        {
+            var next = Rules.AvailableCivics(known, level).OrderBy(c => c.Cost).First();
+            Assert.All(next.Prereqs, pre => Assert.True(Rules.HasCivic(known, level, pre)));
+            if (next.Level > 0) level = next.Level; else known.Add(next.Id);
+        }
+        Assert.Equal(Rules.Civics.Length, known.Count);
+        Assert.True(level > 30);
+        Assert.All(Rules.Civics, c => Assert.All(c.Prereqs, pre => Assert.NotNull(Rules.Civic(pre))));
+    }
+
+    [Fact]
+    public void Religion_is_founded_spreads_and_is_carried_by_missionaries()
+    {
+        var g = New(2, 0);
+        foreach (int pid in new[] { 0, 1 }) Assert.Null(Cmd(g, pid, CmdType.FoundCity, g.UnitsOf(pid).First(u => u.Def.Role == UnitRole.Settler).Id));
+        var p = g.P(0);
+        var capital = g.CitiesOf(0).Single(); var foreign = g.CitiesOf(1).Single();
+        Assert.NotNull(Cmd(g, 0, CmdType.FoundReligion, 0, 1));                  // not enough faith
+        Assert.NotNull(Cmd(g, 0, CmdType.Recruit, capital.Id));                  // nothing to preach yet
+        p.Faith = 500;
+        Assert.Null(Cmd(g, 0, CmdType.FoundReligion, 0, 1));                     // "Трудолюбие": +10% production
+        Assert.NotNull(Cmd(g, 0, CmdType.FoundReligion, 1, 2));                  // one religion per founder
+        g.P(1).Faith = 500;
+        Assert.NotNull(Cmd(g, 1, CmdType.FoundReligion, 0, 3));                  // name taken
+        Assert.NotNull(Cmd(g, 1, CmdType.FoundReligion, 1, 1));                  // belief taken
+        var rel = g.S.Religions.Single();
+        Assert.Equal(rel.Id, capital.Religion);
+        Assert.Equal(0, foreign.Religion);
+
+        // the belief works in the city that follows it
+        capital.Buildings.Remove("placeholder");
+        var without = new Game(SaveGame.FromJson<GameState>(SaveGame.ToJson(g.S)));
+        without.CitiesOf(0).Single().Religion = 0;
+        g.RefreshEconomy(p); without.RefreshEconomy(without.P(0));
+        Assert.True(capital.ProdRate >= without.CitiesOf(0).Single().ProdRate);
+
+        // a missionary walks into foreign land without open borders and converts the city
+        Assert.Null(Cmd(g, 0, CmdType.Recruit, capital.Id));
+        var m = g.UnitsOf(0).Single(u => u.Def.Role == UnitRole.Missionary);
+        Assert.Equal(rel.Id, m.Religion);
+        Assert.NotNull(Cmd(g, 0, CmdType.Preach, g.UnitsOf(0).First(u => u.Def.Id == "warrior").Id));
+        g.RemoveUnit(m);
+        m = g.AddUnit(0, Rules.UnitIndex("missionary"), g.Grid.Nb[foreign.Tile].First(t => g.S.Tiles[t].Passable));
+        m.Religion = rel.Id;
+        Assert.False(g.CanEnterTerritory(0, foreign.Tile));
+        Assert.True(g.CanEnter(m, foreign.Tile));
+        Assert.NotNull(Cmd(g, 0, CmdType.Preach, m.Id));                         // must stand in a city
+        m.Tile = foreign.Tile;                                                   // (walked in)
+        var before = p.FaithRate;
+        Assert.Null(Cmd(g, 0, CmdType.Preach, m.Id));
+        Assert.Equal(rel.Id, foreign.Religion);
+        Assert.DoesNotContain(g.S.Units.Values, u => u.Def.Role == UnitRole.Missionary);
+        g.RefreshEconomy(p);
+        Assert.True(p.FaithRate > before);                                       // the founder is paid by follower cities
+        Assert.Equal(rel.Id, g.BuildView(1).Me.Religions.Single().Id);
+        Assert.Equal(2, g.BuildView(0).Me.Religions.Single().Cities);
+        Assert.False(g.CanBuild(p, capital, "u:missionary"));                    // only recruited with faith
+    }
+
+    [Fact]
+    public void Religion_spreads_passively_to_nearby_cities()
+    {
+        var g = New(2, 0);
+        Assert.Null(Cmd(g, 0, CmdType.FoundCity, g.UnitsOf(0).First(u => u.Def.Role == UnitRole.Settler).Id));
+        Assert.Null(Cmd(g, 1, CmdType.FoundCity, g.UnitsOf(1).First(u => u.Def.Role == UnitRole.Settler).Id));
+        var capital = g.CitiesOf(0).Single();
+        int near = Enumerable.Range(0, g.Grid.Count).First(t => g.CanFoundAt(0, t) && g.Grid.Distance(t, capital.Tile) is >= 3 and <= 5);
+        var s = g.AddUnit(0, Rules.UnitIndex("settler"), near);
+        Assert.Null(Cmd(g, 0, CmdType.FoundCity, s.Id));
+        var second = g.CitiesOf(0).First(c => !c.Capital);
+        g.P(0).Faith = 500;
+        Assert.Null(Cmd(g, 0, CmdType.FoundReligion, 2, 4));
+        Assert.Equal(0, second.Religion);
+        for (int i = 0; i < 12; i++) { Cmd(g, 0, CmdType.EndTurn); Cmd(g, 1, CmdType.EndTurn); }
+        Assert.Equal(capital.Religion, second.Religion);                          // within range of the holy city
+        Assert.Equal(0, g.CitiesOf(1).Single().Religion);                         // far away: untouched
+    }
+
+    [Fact]
     public void Fog_of_war_hides_everything_outside_line_of_sight()
     {
         var g = Simulation.Run(40, 4, 5, false, null, false);

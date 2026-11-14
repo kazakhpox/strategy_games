@@ -105,6 +105,7 @@ public static class Simulation
             var lv = g.Active.Select(p => (double)p.ScienceLevel).OrderByDescending(x => x).ToList();
             double med = AntiSnowball.Median(lv.ToList());
             Console.WriteLine($"Итог: AI0/медиана = {g.P(0).ScienceLevel / Math.Max(1, AntiSnowball.Median(g.Active.Where(p => p.Id != 0).Select(p => (double)p.ScienceLevel).ToList())):F2}; лидер/медиана по науке = {lv.Max() / Math.Max(1, med):F2}, лидер/аутсайдер = {lv.Max() / Math.Max(1, lv.Min()):F2}; " +
+                              $"институтов {string.Join("/", g.Active.Select(p => p.Civics.Count + p.CivicLevel))}, религии: {string.Join(", ", g.S.Religions.Select(r => $"{r.Name}={g.S.Cities.Values.Count(c => c.Religion == r.Id)} гор."))}; " +
                               $"роскоши у игроков {string.Join("/", g.Active.Select(p => p.Luxuries))}, кораблей {g.S.Units.Values.Count(u => u.Def.Sea)}, председатель {g.S.Chair}; войн {wars}, захватов {captures}, протестов {protests}, отделений {secessions}; вольных городов {g.CitiesOf(g.Neutral.Id).Count()}; {sw.ElapsedMilliseconds} мс");
         }
         return g;

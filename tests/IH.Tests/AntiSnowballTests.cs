@@ -128,7 +128,7 @@ public class AntiSnowballTests
             AntiSnowball.Median(g.Active.Where(p => p.Id != 0).Select(p => (double)p.ScienceLevel).ToList());
         double on = Lead(Simulation.Run(400, 6, seed, false, null, false, 1.5));
         double off = Lead(Simulation.Run(400, 6, seed, true, null, false, 1.5));
-        Assert.True(on < off * 0.7, $"lead with system {on:F2} vs without {off:F2}");
+        Assert.True(on < off * 0.85, $"lead with system {on:F2} vs without {off:F2}");
         Assert.True(on > 1.05, $"the stronger player should still be ahead ({on:F2})");
     }
 

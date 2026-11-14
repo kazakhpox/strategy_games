@@ -125,6 +125,7 @@ public sealed partial class Game
         foreach (var u in UnitsOf(Neutral.Id)) u.Hp = Math.Min(100, u.Hp + 10);
         foreach (var c in CitiesOf(Neutral.Id)) c.Culture += 1;
         RecomputeBorders();
+        SpreadReligion();
         foreach (var p in Active) RefreshEconomy(p);
         AntiSnowball.Recompute(this);
         foreach (var p in Active) RefreshEconomy(p);
@@ -154,12 +155,19 @@ public sealed partial class Game
         p.Resources = connected.ToList();
         p.Luxuries = connected.Count(r => Rules.Res((Resource)r).Class == ResClass.Luxury);
         bool chair = S.Chair == p.Id;
-        double faith = 0;
+        double faith = 0, culture = 0;
+        var fx = Rules.CivicBonus(p.Civics, p.CivicLevel);
+        p.CivicFx = fx;
+        var founded = FoundedBy(p.Id);
 
         foreach (var c in cities)
         {
-            int happyCap = 5 + p.Luxuries + p.Future[Rules.BranchSocial] / 2, foodFlat = 0, comFlat = 0, culFlat = 1;
-            double prodPct = 0, sciPct = 0, goldPct = 0, culPct = 0, maintCut = 0, upkeep = 0;
+            // institutions apply everywhere, a belief only where the city follows its religion
+            var bel = ReligionOf(c.Religion) is { } creed ? Rules.Beliefs[creed.Belief].Effect : null;
+            int happyCap = 5 + p.Luxuries + p.Future[Rules.BranchSocial] / 2 + fx.Happy + (bel?.Happy ?? 0);
+            int foodFlat = fx.Food + (bel?.Food ?? 0), comFlat = 0, culFlat = 1 + fx.Culture + (bel?.Culture ?? 0);
+            double prodPct = fx.ProdPct + (bel?.ProdPct ?? 0), sciPct = fx.SciPct + (bel?.SciPct ?? 0), goldPct = fx.GoldPct + (bel?.GoldPct ?? 0);
+            double culPct = fx.CulPct + (bel?.CulPct ?? 0), maintCut = 0, upkeep = 0, cityFaith = 0;
             foreach (var id in c.Buildings)
             {
                 var b = Rules.Building(id);
@@ -167,7 +175,7 @@ public sealed partial class Game
                 happyCap += b.Happy; foodFlat += b.Food; comFlat += b.Commerce; culFlat += b.Culture;
                 prodPct += b.ProdPct; sciPct += b.SciPct; goldPct += b.GoldPct; culPct += b.CulPct;
                 maintCut = Math.Max(maintCut, b.MaintCutPct); upkeep += b.Upkeep;
-                if (c.DisorderTurns == 0) faith += b.Faith;
+                if (c.DisorderTurns == 0) cityFaith += b.Faith;
             }
             c.Happy = happyCap;
             c.Unhappy = Math.Min(c.Pop, Math.Max(0, c.Pop - happyCap) + Math.Min(2, c.Unrest / 40));
@@ -217,6 +225,8 @@ public sealed partial class Game
             int dist = capital == null ? 0 : Grid.Distance(capital.Tile, c.Tile);
             c.Maint = c.Capital ? 0 : (0.5 + dist / 8.0 + 0.25 * (cities.Count - 1)) * (1 - maintCut / 100);
             c.BuildingUpkeep = upkeep;
+            faith += cityFaith * (1 + (fx.FaithPct + (bel?.FaithPct ?? 0)) / 100.0);
+            culture += c.CulRate;
             sci += c.SciRate; gold += c.GoldRate; bUp += upkeep; maint += c.Maint;
         }
 
@@ -224,7 +234,19 @@ public sealed partial class Game
         p.Income = gold; p.SciRate = sci;
         p.UnitUpkeep = Math.Max(0, units - (4 + 3 * cities.Count));
         p.BuildingUpkeep = bUp; p.CityMaint = maint; p.RoadUpkeep = roads * 0.15;
-        double baseCost = p.UnitUpkeep + p.BuildingUpkeep + p.CityMaint + p.RoadUpkeep;
+        if (founded != null)
+        {
+            // the founder is paid by the faithful: faith from every follower city, gold from the foreign ones
+            foreach (var c in S.Cities.Values)
+            {
+                if (c.Religion != founded.Id) continue;
+                faith += 1;
+                if (c.Owner != p.Id) gold += 1;
+            }
+        }
+        p.Income = gold;
+        p.CultureRate = culture;
+        double baseCost = (p.UnitUpkeep + p.BuildingUpkeep + p.CityMaint + p.RoadUpkeep) * (1 - Math.Min(60, fx.UpkeepCutPct) / 100.0);
         p.StrainCost = baseCost * (p.UpkeepMult - 1);
         p.FaithRate = faith;
         int partners = 0; bool atWar = false;
@@ -234,7 +256,7 @@ public sealed partial class Game
             var rel = Rel(p.Id, o.Id);
             if (rel.AtWar) atWar = true; else if (rel.OpenBorders) partners++;
         }
-        p.FavorRate = 1 + partners + (atWar ? 0 : 1); // peace and open borders earn diplomatic favor
+        p.FavorRate = 1 + partners + (atWar ? 0 : 1) + fx.Favor; // peace and open borders earn diplomatic favor
         p.EchoBonus = AntiSnowball.Echo(this, p);
         p.GoldRate = (int)Math.Floor(p.Income - baseCost - p.StrainCost);
     }
@@ -296,6 +318,19 @@ public sealed partial class Game
         }
 
         p.Faith += (int)p.FaithRate;
+        p.CivicProgress += (int)Math.Round(p.CultureRate);
+        if (p.Civic != null)
+        {
+            var civic = Rules.Civic(p.Civic);
+            if (civic == null) p.Civic = null;
+            else if (p.CivicProgress >= civic.Cost)
+            {
+                p.CivicProgress -= civic.Cost;
+                if (civic.Level > 0) p.CivicLevel = Math.Max(p.CivicLevel, civic.Level); else p.Civics.Add(civic.Id);
+                p.Civic = null;
+                Emit(EventKind.CivicDone, s: civic.Id, only: p.Id);
+            }
+        }
         p.Favor += (int)p.FavorRate;
         p.Gold += p.GoldRate;
         if (p.Gold < 0)
@@ -365,7 +400,7 @@ public sealed partial class Game
     private void ProcessUnrest(Player p, City c, City? capital, int cityCount)
     {
         int dist = capital == null ? 0 : Grid.Distance(capital.Tile, c.Tile);
-        double calm = 3 + p.Future[Rules.BranchSocial];
+        double calm = 3 + p.Future[Rules.BranchSocial] + p.CivicFx.Calm + (ReligionOf(c.Religion) is { } creed ? Rules.Beliefs[creed.Belief].Effect.Calm : 0);
         foreach (var id in c.Buildings) calm += Rules.Building(id)?.Calm ?? 0;
         double pressure = Bal.UnrestPerPressure * p.Pressure * (0.6 + dist / 8.0) + Math.Max(0, c.Pop - c.Happy);
         c.Unrest = (int)Math.Clamp(c.Unrest + pressure - calm, 0, 100);
